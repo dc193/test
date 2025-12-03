@@ -4,17 +4,36 @@
 
 ## 功能
 
-- **快速记录**：在 Telegram 发消息即可记录灵感
-- **AI 分析**：自动识别灵感涉及的思维模型
-- **智能标签**：AI 推荐相关标签
-- **Obsidian 存储**：所有数据保存为 Markdown，支持双向链接
+### 记录灵感
+- **文字输入**：发送文字消息，AI 自动分析
+- **语音输入**：发送语音，自动转文字后分析
+- **图片输入**：发送图片，OCR 提取文字后分析
+- **智能分析**：自动匹配思维模型、推荐标签
+- **智能推荐**：当现有模型匹配度不高时，AI 会推荐新模型
+
+### 回顾与连接
+- **随机回顾**：随机查看历史灵感
+- **灵感关联**：AI 分析两条灵感的潜在联系
+- **周报生成**：自动生成思维周报
+- **每日提醒**：每天 9:00 推送随机灵感回顾
+
+### 模型管理
 - **预置模型**：内置 20 个经典思维模型
+- **搜索添加**：AI 联网搜索新思维模型
+- **自定义管理**：添加、删除思维模型
+
+### 存储
+- **Obsidian 存储**：所有数据保存为 Markdown
+- **双向链接**：灵感与思维模型自动关联
+- **本地安全**：数据完全存储在本地
 
 ## 架构
 
 ```
 Telegram Bot ←→ Google Gemini AI ←→ Obsidian Vault
-    (输入)          (分析)            (存储)
+  (交互)           (分析)            (存储)
+    ↓
+  文字/语音/图片
 ```
 
 ## 快速开始
@@ -22,7 +41,7 @@ Telegram Bot ←→ Google Gemini AI ←→ Obsidian Vault
 ### 1. 准备工作
 
 - 一台一直在线的 Mac（或 Linux）
-- Python 3.10+
+- Python 3.9+
 - Telegram 账号
 - Google AI API Key（免费）
 
@@ -48,8 +67,8 @@ cd <repo-name>
 python3 -m venv venv
 source venv/bin/activate
 
-# 安装依赖
-pip install -r requirements.txt
+# 安装依赖（国内用户建议使用镜像）
+pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
 ```
 
 ### 4. 配置
@@ -66,7 +85,7 @@ cp .env.example .env
 TELEGRAM_BOT_TOKEN=你的Telegram Bot Token
 GOOGLE_AI_API_KEY=你的Google AI Key
 OBSIDIAN_VAULT_PATH=/Users/你的用户名/Documents/Obsidian/你的Vault名
-ALLOWED_USER_IDS=你的Telegram用户ID（可选）
+ALLOWED_USER_IDS=你的Telegram用户ID（可选，配置后启用每日提醒）
 ```
 
 > 💡 不知道你的 Telegram ID？启动 Bot 后发送 `/myid` 即可获取
@@ -82,7 +101,17 @@ python bot.py
 - `🧠 思维模型/` - 预置的 20 个思维模型
 - `📊 总结/` - 周报等总结
 
-### 6. 后台运行（可选）
+### 6. 代理设置（国内用户）
+
+如果无法连接 Telegram，需要设置代理：
+
+```bash
+export https_proxy=http://127.0.0.1:你的代理端口
+export http_proxy=http://127.0.0.1:你的代理端口
+python bot.py
+```
+
+### 7. 后台运行（可选）
 
 使用 `nohup` 让 Bot 在后台持续运行：
 
@@ -100,13 +129,36 @@ python bot.py
 
 ## 使用方法
 
+### 记录灵感
+
 | 操作 | 说明 |
 |------|------|
-| 发送任意消息 | 记录灵感，AI 自动分析 |
-| `/models` | 查看思维模型库 |
+| 发送文字 | AI 分析并保存灵感 |
+| 发送语音 | 转文字后分析保存 |
+| 发送图片 | OCR 提取文字后分析保存 |
+
+### 查看回顾
+
+| 命令 | 说明 |
+|------|------|
 | `/recent` | 最近 10 条灵感 |
 | `/random` | 随机回顾一条旧灵感 |
 | `/search 关键词` | 搜索灵感 |
+| `/connect` | AI 分析两条灵感的关联 |
+| `/summary` | 生成本周思维周报 |
+
+### 思维模型管理
+
+| 命令 | 说明 |
+|------|------|
+| `/models` | 查看思维模型库 |
+| `/addmodel 关键词` | 搜索并添加新模型 |
+| `/delmodel 名称` | 删除指定模型 |
+
+### 其他
+
+| 命令 | 说明 |
+|------|------|
 | `/stats` | 统计信息 |
 | `/myid` | 获取你的 Telegram ID |
 | `/help` | 帮助信息 |
@@ -144,12 +196,14 @@ models: [[奥卡姆剃刀]], [[第一性原理]]
 | 长期 | 复利思维、边际效用递减 |
 | 其他 | 类比思维、心智模型 |
 
+> 💡 使用 `/addmodel 关键词` 可以搜索并添加更多思维模型
+
 ## 项目结构
 
 ```
 .
 ├── bot.py              # Telegram Bot 主程序
-├── ai.py               # AI 分析模块
+├── ai.py               # AI 分析模块（Gemini）
 ├── vault.py            # Obsidian Vault 读写
 ├── vault_templates/    # 思维模型模板
 ├── requirements.txt    # Python 依赖
@@ -162,6 +216,7 @@ models: [[奥卡姆剃刀]], [[第一性原理]]
 - API Keys 存储在 `.env` 文件，已加入 `.gitignore`
 - 可通过 `ALLOWED_USER_IDS` 限制只有你能使用 Bot
 - 所有数据存储在本地 Obsidian vault
+- 灵感内容会发送到 Google Gemini API 进行分析
 
 ## License
 
