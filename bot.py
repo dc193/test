@@ -5,7 +5,9 @@
 
 import os
 import logging
+import base64
 from pathlib import Path
+from datetime import time, datetime
 
 from dotenv import load_dotenv
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -38,6 +40,8 @@ ALLOWED_USERS: set = set()
 
 # 临时存储待确认的灵感
 pending_ideas: dict = {}
+# 临时存储待确认的新模型
+pending_models: dict = {}
 
 
 def is_authorized(user_id: int) -> bool:
@@ -57,14 +61,23 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 随时记录你的灵感，我会帮你整理成思维模型。
 
-**使用方法：**
-• 直接发送消息 → 记录灵感
-• /models → 查看思维模型库
+**记录灵感：**
+• 发送文字 → 记录灵感
+• 发送语音 → 语音转文字记录
+• 发送图片 → OCR 提取文字记录
+
+**查看回顾：**
 • /recent → 最近的灵感
-• /random → 随机回顾一条灵感
-• /search 关键词 → 搜索灵感
+• /random → 随机回顾
+• /connect → 发现灵感关联
+• /summary → 生成周报
+
+**思维模型：**
+• /models → 查看模型库
+• /addmodel 关键词 → 搜索添加新模型
+• /delmodel 名称 → 删除模型
+
 • /stats → 统计信息
-• /myid → 查看你的用户 ID
 • /help → 帮助信息
 
 开始记录你的第一个灵感吧！"""
@@ -80,24 +93,30 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     help_text = """💡 **灵感捕捉 Bot 帮助**
 
 **记录灵感**
-直接发送任何文字消息，Bot 会：
-1. 用 AI 分析你的灵感
-2. 匹配相关的思维模型
-3. 自动添加标签
-4. 保存到 Obsidian
+• 发送文字消息 → AI 分析并保存
+• 发送语音消息 → 转文字后分析保存
+• 发送图片 → OCR 提取文字后分析保存
 
-**命令列表**
-• /models - 查看所有思维模型
+**查看回顾**
 • /recent - 最近 10 条灵感
 • /random - 随机回顾一条旧灵感
 • /search <关键词> - 搜索灵感
+• /connect - 随机找两条灵感的关联
+• /summary - 生成本周思维周报
+
+**思维模型管理**
+• /models - 查看所有思维模型
+• /addmodel <关键词> - 搜索并添加新模型
+• /delmodel <名称> - 删除一个模型
+
+**其他**
 • /stats - 查看统计信息
 • /myid - 获取你的 Telegram ID
 
 **小技巧**
 • 灵感不用写太长，几句话即可
-• 可以记录触发灵感的场景
-• 定期用 /random 回顾旧灵感"""
+• AI 会自动推荐新的思维模型
+• 定期用 /random 和 /connect 激发新想法"""
 
     await update.message.reply_text(help_text, parse_mode="Markdown")
 
@@ -127,6 +146,7 @@ async def models(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text += f"{i}. {name}\n"
 
     text += f"\n共 {len(model_list)} 个模型"
+    text += "\n\n💡 使用 `/addmodel 关键词` 搜索添加新模型"
     await update.message.reply_text(text, parse_mode="Markdown")
 
 
@@ -205,6 +225,164 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(text, parse_mode="Markdown")
 
 
+async def connect(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """找两条灵感的关联"""
+    if not is_authorized(update.effective_user.id):
+        return
+
+    idea1, idea2 = vault.get_two_random_ideas()
+    if not idea1 or not idea2:
+        await update.message.reply_text("需要至少 2 条灵感才能进行关联分析")
+        return
+
+    thinking_msg = await update.message.reply_text("🔗 正在分析两条灵感的关联...")
+
+    try:
+        connection = analyzer.generate_connection(idea1["content"], idea2["content"])
+
+        text = f"""🔗 **灵感关联分析**
+
+**灵感 1:**
+_{idea1['content'][:100]}{'...' if len(idea1['content']) > 100 else ''}_
+
+**灵感 2:**
+_{idea2['content'][:100]}{'...' if len(idea2['content']) > 100 else ''}_
+
+**关联分析:**
+{connection}"""
+
+        await thinking_msg.edit_text(text, parse_mode="Markdown")
+
+    except Exception as e:
+        logger.error(f"关联分析出错: {e}")
+        await thinking_msg.edit_text(f"❌ 分析出错: {str(e)}")
+
+
+async def summary(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """生成周报"""
+    if not is_authorized(update.effective_user.id):
+        return
+
+    ideas = vault.get_recent_ideas(50)  # 获取最近的灵感
+    if not ideas:
+        await update.message.reply_text("还没有记录任何灵感，无法生成周报")
+        return
+
+    thinking_msg = await update.message.reply_text("📊 正在生成周报...")
+
+    try:
+        # 简单统计（实际可以更复杂）
+        models_used = {}
+        summary_text = analyzer.generate_weekly_summary(ideas, models_used)
+
+        # 保存周报
+        vault.save_summary(summary_text)
+
+        text = f"""📊 **本周思维周报**
+
+{summary_text}
+
+_周报已保存到 Obsidian_"""
+
+        await thinking_msg.edit_text(text, parse_mode="Markdown")
+
+    except Exception as e:
+        logger.error(f"生成周报出错: {e}")
+        await thinking_msg.edit_text(f"❌ 生成出错: {str(e)}")
+
+
+async def addmodel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """搜索并添加新思维模型"""
+    if not is_authorized(update.effective_user.id):
+        return
+
+    if not context.args:
+        await update.message.reply_text(
+            "请提供搜索关键词，例如:\n"
+            "`/addmodel 决策偏见`\n"
+            "`/addmodel 创新方法`",
+            parse_mode="Markdown"
+        )
+        return
+
+    keyword = " ".join(context.args)
+    user_id = update.effective_user.id
+
+    # 检查是否已存在
+    existing_models = vault.get_model_names()
+    if keyword in existing_models:
+        await update.message.reply_text(f"「{keyword}」已经在模型库中了")
+        return
+
+    thinking_msg = await update.message.reply_text(f"🔍 正在搜索「{keyword}」相关的思维模型...")
+
+    try:
+        result = analyzer.search_mental_model(keyword)
+
+        if not result:
+            await thinking_msg.edit_text(f"没有找到与「{keyword}」相关的思维模型")
+            return
+
+        # 检查是否已存在
+        if result["name"] in existing_models:
+            await thinking_msg.edit_text(f"「{result['name']}」已经在模型库中了")
+            return
+
+        # 保存待确认的模型
+        pending_models[user_id] = result
+
+        # 构建确认消息
+        text = f"""🧠 **找到思维模型**
+
+**{result['name']}**
+
+**定义:** {result['definition']}
+
+**核心要点:**
+"""
+        for point in result.get("key_points", []):
+            text += f"• {point}\n"
+
+        text += "\n**应用场景:**\n"
+        for app in result.get("applications", []):
+            text += f"• {app}\n"
+
+        if result.get("representatives"):
+            text += f"\n**代表人物:** {result['representatives']}"
+
+        # 创建确认按钮
+        keyboard = [
+            [
+                InlineKeyboardButton("✅ 添加到模型库", callback_data="add_model"),
+                InlineKeyboardButton("❌ 取消", callback_data="cancel_model"),
+            ]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+
+        await thinking_msg.edit_text(text, parse_mode="Markdown", reply_markup=reply_markup)
+
+    except Exception as e:
+        logger.error(f"搜索模型出错: {e}")
+        await thinking_msg.edit_text(f"❌ 搜索出错: {str(e)}")
+
+
+async def delmodel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """删除思维模型"""
+    if not is_authorized(update.effective_user.id):
+        return
+
+    if not context.args:
+        await update.message.reply_text("请提供要删除的模型名称，例如: `/delmodel 第一性原理`", parse_mode="Markdown")
+        return
+
+    name = " ".join(context.args)
+
+    if vault.delete_model(name):
+        await update.message.reply_text(f"✅ 已删除思维模型「{name}」")
+    else:
+        await update.message.reply_text(f"❌ 未找到思维模型「{name}」")
+
+
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """处理普通消息（记录灵感）"""
     if not is_authorized(update.effective_user.id):
@@ -215,6 +393,75 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not idea_text:
         return
 
+    await process_idea(update, context, idea_text)
+
+
+async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """处理语音消息"""
+    if not is_authorized(update.effective_user.id):
+        await update.message.reply_text("⛔ 你没有使用此 Bot 的权限")
+        return
+
+    thinking_msg = await update.message.reply_text("🎤 正在转录语音...")
+
+    try:
+        # 下载语音文件
+        voice = update.message.voice
+        file = await context.bot.get_file(voice.file_id)
+        voice_bytes = await file.download_as_bytearray()
+
+        # 转录
+        transcribed_text = analyzer.transcribe_audio(bytes(voice_bytes), "audio/ogg")
+
+        if transcribed_text.startswith("语音转录出错"):
+            await thinking_msg.edit_text(f"❌ {transcribed_text}")
+            return
+
+        await thinking_msg.delete()
+        await update.message.reply_text(f"🎤 语音转录: _{transcribed_text}_", parse_mode="Markdown")
+
+        # 处理为灵感
+        await process_idea(update, context, transcribed_text)
+
+    except Exception as e:
+        logger.error(f"语音处理出错: {e}")
+        await thinking_msg.edit_text(f"❌ 语音处理出错: {str(e)}")
+
+
+async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """处理图片消息"""
+    if not is_authorized(update.effective_user.id):
+        await update.message.reply_text("⛔ 你没有使用此 Bot 的权限")
+        return
+
+    thinking_msg = await update.message.reply_text("🖼️ 正在分析图片...")
+
+    try:
+        # 下载图片（获取最大尺寸）
+        photo = update.message.photo[-1]
+        file = await context.bot.get_file(photo.file_id)
+        photo_bytes = await file.download_as_bytearray()
+
+        # 分析图片
+        extracted_text = analyzer.analyze_image(bytes(photo_bytes), "image/jpeg")
+
+        if extracted_text.startswith("图片分析出错"):
+            await thinking_msg.edit_text(f"❌ {extracted_text}")
+            return
+
+        await thinking_msg.delete()
+        await update.message.reply_text(f"🖼️ 图片内容: _{extracted_text[:200]}{'...' if len(extracted_text) > 200 else ''}_", parse_mode="Markdown")
+
+        # 处理为灵感
+        await process_idea(update, context, extracted_text)
+
+    except Exception as e:
+        logger.error(f"图片处理出错: {e}")
+        await thinking_msg.edit_text(f"❌ 图片处理出错: {str(e)}")
+
+
+async def process_idea(update: Update, context: ContextTypes.DEFAULT_TYPE, idea_text: str):
+    """处理灵感文本"""
     user_id = update.effective_user.id
 
     # 发送「正在分析」提示
@@ -228,6 +475,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         matched_models = analysis.get("matched_models", [])
         tags = analysis.get("tags", [])
         ai_analysis = analysis.get("analysis", "")
+        suggested_new_model = analysis.get("suggested_new_model")
 
         # 构建确认消息
         confirm_text = "💡 **灵感已分析**\n\n"
@@ -240,23 +488,37 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if ai_analysis:
             confirm_text += f"\n**AI 分析**: {ai_analysis}\n"
 
+        # 如果有推荐新模型
+        if suggested_new_model:
+            confirm_text += f"\n💡 **推荐新模型**: {suggested_new_model['name']}\n"
+            confirm_text += f"_{suggested_new_model['description']}_\n"
+
         # 保存待确认的灵感
         pending_ideas[user_id] = {
             "content": idea_text,
             "models": matched_models,
             "tags": tags,
             "analysis": ai_analysis,
+            "suggested_new_model": suggested_new_model,
         }
 
         # 创建确认按钮
-        keyboard = [
+        buttons = [
             [
                 InlineKeyboardButton("✅ 保存", callback_data="save_idea"),
                 InlineKeyboardButton("📝 仅保存原文", callback_data="save_plain"),
             ],
-            [InlineKeyboardButton("❌ 取消", callback_data="cancel_idea")],
         ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
+
+        # 如果有推荐新模型，添加按钮
+        if suggested_new_model:
+            buttons.append([
+                InlineKeyboardButton(f"➕ 同时添加「{suggested_new_model['name'][:10]}」模型", callback_data="save_idea_with_model"),
+            ])
+
+        buttons.append([InlineKeyboardButton("❌ 取消", callback_data="cancel_idea")])
+
+        reply_markup = InlineKeyboardMarkup(buttons)
 
         # 删除「正在分析」消息，发送确认消息
         await thinking_msg.delete()
@@ -277,40 +539,116 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     data = query.data
 
-    if user_id not in pending_ideas:
-        await query.edit_message_text("❌ 灵感已过期，请重新发送")
+    # 处理灵感相关的回调
+    if data in ["save_idea", "save_plain", "cancel_idea", "save_idea_with_model"]:
+        if user_id not in pending_ideas:
+            await query.edit_message_text("❌ 灵感已过期，请重新发送")
+            return
+
+        idea_data = pending_ideas[user_id]
+
+        if data == "save_idea":
+            # 保存完整灵感（包含 AI 分析）
+            vault.save_idea(
+                content=idea_data["content"],
+                models=idea_data["models"],
+                tags=idea_data["tags"],
+                ai_analysis=idea_data["analysis"],
+            )
+            del pending_ideas[user_id]
+
+            models_text = ""
+            if idea_data["models"]:
+                models_text = f"\n关联: {', '.join(idea_data['models'])}"
+
+            await query.edit_message_text(
+                f"✅ **灵感已保存**{models_text}\n\n继续发送下一个灵感吧！",
+                parse_mode="Markdown",
+            )
+
+        elif data == "save_idea_with_model":
+            # 保存灵感并添加新模型
+            vault.save_idea(
+                content=idea_data["content"],
+                models=idea_data["models"],
+                tags=idea_data["tags"],
+                ai_analysis=idea_data["analysis"],
+            )
+
+            # 添加新模型
+            new_model = idea_data.get("suggested_new_model")
+            if new_model:
+                vault.save_model(
+                    name=new_model["name"],
+                    definition=new_model["description"],
+                )
+
+            del pending_ideas[user_id]
+
+            await query.edit_message_text(
+                f"✅ **灵感已保存**\n✅ **已添加新模型「{new_model['name']}」**\n\n继续发送下一个灵感吧！",
+                parse_mode="Markdown",
+            )
+
+        elif data == "save_plain":
+            # 仅保存原文
+            vault.save_idea(content=idea_data["content"])
+            del pending_ideas[user_id]
+            await query.edit_message_text("✅ **灵感已保存**（仅原文）", parse_mode="Markdown")
+
+        elif data == "cancel_idea":
+            del pending_ideas[user_id]
+            await query.edit_message_text("❌ 已取消")
+
+    # 处理模型相关的回调
+    elif data in ["add_model", "cancel_model"]:
+        if user_id not in pending_models:
+            await query.edit_message_text("❌ 操作已过期")
+            return
+
+        model_data = pending_models[user_id]
+
+        if data == "add_model":
+            vault.save_model(
+                name=model_data["name"],
+                definition=model_data["definition"],
+                key_points=model_data.get("key_points"),
+                applications=model_data.get("applications"),
+                representatives=model_data.get("representatives"),
+            )
+            del pending_models[user_id]
+            await query.edit_message_text(
+                f"✅ **已添加思维模型「{model_data['name']}」**\n\n现在可以在灵感分析中使用这个模型了！",
+                parse_mode="Markdown",
+            )
+
+        elif data == "cancel_model":
+            del pending_models[user_id]
+            await query.edit_message_text("❌ 已取消")
+
+
+async def daily_reminder(context: ContextTypes.DEFAULT_TYPE):
+    """每日灵感回顾提醒"""
+    if not ALLOWED_USERS:
         return
 
-    idea_data = pending_ideas[user_id]
+    idea = vault.get_random_idea()
+    if not idea:
+        return
 
-    if data == "save_idea":
-        # 保存完整灵感（包含 AI 分析）
-        filepath = vault.save_idea(
-            content=idea_data["content"],
-            models=idea_data["models"],
-            tags=idea_data["tags"],
-            ai_analysis=idea_data["analysis"],
-        )
-        del pending_ideas[user_id]
+    text = f"""🌅 **每日灵感回顾**
 
-        models_text = ""
-        if idea_data["models"]:
-            models_text = f"\n关联: {', '.join(idea_data['models'])}"
+{idea.get('content', '')}
 
-        await query.edit_message_text(
-            f"✅ **灵感已保存**{models_text}\n\n继续发送下一个灵感吧！",
-            parse_mode="Markdown",
-        )
+_来自: {idea.get('name', '')}_
 
-    elif data == "save_plain":
-        # 仅保存原文
-        filepath = vault.save_idea(content=idea_data["content"])
-        del pending_ideas[user_id]
-        await query.edit_message_text("✅ **灵感已保存**（仅原文）", parse_mode="Markdown")
+回复 /random 查看更多灵感"""
 
-    elif data == "cancel_idea":
-        del pending_ideas[user_id]
-        await query.edit_message_text("❌ 已取消")
+    for user_id in ALLOWED_USERS:
+        try:
+            await context.bot.send_message(chat_id=user_id, text=text, parse_mode="Markdown")
+        except Exception as e:
+            logger.error(f"发送提醒失败: {e}")
 
 
 def main():
@@ -369,12 +707,24 @@ def main():
     app.add_handler(CommandHandler("random", random_idea))
     app.add_handler(CommandHandler("search", search))
     app.add_handler(CommandHandler("stats", stats))
+    app.add_handler(CommandHandler("connect", connect))
+    app.add_handler(CommandHandler("summary", summary))
+    app.add_handler(CommandHandler("addmodel", addmodel))
+    app.add_handler(CommandHandler("delmodel", delmodel))
 
     # 注册消息处理器
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    app.add_handler(MessageHandler(filters.VOICE, handle_voice))
+    app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
 
     # 注册回调处理器
     app.add_handler(CallbackQueryHandler(handle_callback))
+
+    # 设置每日提醒（每天早上 9 点）
+    if ALLOWED_USERS:
+        job_queue = app.job_queue
+        job_queue.run_daily(daily_reminder, time=time(hour=9, minute=0))
+        print("✅ 已设置每日 9:00 灵感回顾提醒")
 
     # 启动 Bot
     print("🚀 Bot 启动中...")

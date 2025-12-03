@@ -253,3 +253,204 @@ class ObsidianVault:
     def get_models_count(self) -> int:
         """获取思维模型总数"""
         return len(list(self.models_dir.glob("*.md")))
+
+    def save_model(
+        self,
+        name: str,
+        definition: str,
+        key_points: list[str] = None,
+        applications: list[str] = None,
+        representatives: str = None,
+    ) -> str:
+        """
+        保存一个新的思维模型
+
+        Args:
+            name: 模型名称
+            definition: 定义
+            key_points: 核心要点列表
+            applications: 应用场景列表
+            representatives: 代表人物
+
+        Returns:
+            保存的文件路径
+        """
+        filename = f"{name}.md"
+        filepath = self.models_dir / filename
+
+        # 如果已存在则不覆盖
+        if filepath.exists():
+            return str(filepath)
+
+        # 构建内容
+        lines = [
+            "---",
+            f"tags: [思维模型]",
+            f"created: {datetime.now().strftime('%Y-%m-%d')}",
+            "---",
+            "",
+            f"# {name}",
+            "",
+            "## 定义",
+            "",
+            definition,
+            "",
+        ]
+
+        if key_points:
+            lines.extend([
+                "## 核心要点",
+                "",
+            ])
+            for point in key_points:
+                lines.append(f"- {point}")
+            lines.append("")
+
+        if applications:
+            lines.extend([
+                "## 典型应用",
+                "",
+            ])
+            for app in applications:
+                lines.append(f"- {app}")
+            lines.append("")
+
+        if representatives:
+            lines.extend([
+                "## 代表人物",
+                "",
+                representatives,
+                "",
+            ])
+
+        lines.extend([
+            "## 相关灵感",
+            "",
+        ])
+
+        content = "\n".join(lines)
+        filepath.write_text(content, encoding="utf-8")
+
+        return str(filepath)
+
+    def delete_model(self, name: str) -> bool:
+        """
+        删除一个思维模型
+
+        Args:
+            name: 模型名称
+
+        Returns:
+            是否删除成功
+        """
+        filepath = self.models_dir / f"{name}.md"
+        if filepath.exists():
+            filepath.unlink()
+            return True
+        return False
+
+    def get_model_detail(self, name: str) -> Optional[dict]:
+        """
+        获取思维模型详情
+
+        Args:
+            name: 模型名称
+
+        Returns:
+            模型详情
+        """
+        filepath = self.models_dir / f"{name}.md"
+        if not filepath.exists():
+            return None
+
+        content = filepath.read_text(encoding="utf-8")
+
+        # 提取定义
+        definition = ""
+        match = re.search(r"## 定义\n+(.+?)(?=\n##|\Z)", content, re.DOTALL)
+        if match:
+            definition = match.group(1).strip()
+
+        return {
+            "name": name,
+            "definition": definition,
+            "content": content,
+            "file_path": str(filepath),
+        }
+
+    def get_two_random_ideas(self) -> tuple[Optional[dict], Optional[dict]]:
+        """获取两条随机灵感用于关联分析"""
+        import random
+
+        files = list(self.ideas_dir.glob("*.md"))
+        if len(files) < 2:
+            return None, None
+
+        selected = random.sample(files, 2)
+        ideas = []
+
+        for idea_file in selected:
+            content = idea_file.read_text(encoding="utf-8")
+
+            # 提取正文
+            lines = content.split("\n")
+            in_frontmatter = False
+            capture = False
+            body_lines = []
+
+            for line in lines:
+                if line.strip() == "---":
+                    in_frontmatter = not in_frontmatter
+                    continue
+                if not in_frontmatter:
+                    if line.startswith("# "):
+                        capture = True
+                        continue
+                    if line.startswith("## "):
+                        break
+                    if capture:
+                        body_lines.append(line)
+
+            body = "\n".join(body_lines).strip()
+            ideas.append({
+                "name": idea_file.stem,
+                "content": body,
+            })
+
+        return ideas[0], ideas[1]
+
+    def save_summary(self, content: str, title: str = None) -> str:
+        """
+        保存周报/总结
+
+        Args:
+            content: 总结内容
+            title: 标题（可选）
+
+        Returns:
+            保存的文件路径
+        """
+        now = datetime.now()
+        if not title:
+            # 默认使用周报格式
+            week_num = now.isocalendar()[1]
+            title = f"{now.year}-W{week_num:02d} 周报"
+
+        filename = f"{title}.md"
+        filepath = self.summaries_dir / filename
+
+        lines = [
+            "---",
+            f"date: {now.strftime('%Y-%m-%d %H:%M')}",
+            "tags: [总结]",
+            "---",
+            "",
+            f"# {title}",
+            "",
+            content,
+        ]
+
+        full_content = "\n".join(lines)
+        filepath.write_text(full_content, encoding="utf-8")
+
+        return str(filepath)

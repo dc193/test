@@ -3,6 +3,7 @@ AI 模块 - 使用 Google Gemini 分析灵感
 """
 
 import google.generativeai as genai
+from typing import Optional
 
 
 class IdeaAnalyzer:
@@ -24,7 +25,8 @@ class IdeaAnalyzer:
             dict: {
                 "matched_models": ["模型1", "模型2"],
                 "tags": ["标签1", "标签2"],
-                "analysis": "AI 分析内容"
+                "analysis": "AI 分析内容",
+                "suggested_new_model": None 或 {"name": "模型名", "description": "描述"}
             }
         """
         models_list = "\n".join([f"- {m}" for m in available_models])
@@ -41,15 +43,18 @@ class IdeaAnalyzer:
 1. 从上面的思维模型库中，找出与这条灵感最相关的 1-3 个思维模型（必须是列表中存在的）
 2. 为这条灵感推荐 2-4 个标签（简短的关键词）
 3. 写一段简短的分析（2-3句话），解释这条灵感体现了什么思维方式，以及可以如何深入思考
+4. 如果现有模型库中没有很匹配的模型，推荐一个新的思维模型（从你的知识库中找一个真实存在的、广为人知的思维模型）
 
 ## 输出格式（严格按照此格式，方便解析）
 MODELS: 模型1, 模型2
 TAGS: 标签1, 标签2, 标签3
 ANALYSIS: 你的分析内容
+NEW_MODEL: 模型名称|模型简介（如果不需要推荐新模型，则留空）
 
 注意：
 - MODELS 只能从上面的模型库中选择，不要编造
 - 如果没有匹配的模型，MODELS 留空
+- NEW_MODEL 只在现有库匹配度不高时才推荐，推荐真实存在的思维模型
 - 保持分析简洁有深度"""
 
         try:
@@ -61,6 +66,7 @@ ANALYSIS: 你的分析内容
                 "matched_models": [],
                 "tags": [],
                 "analysis": "",
+                "suggested_new_model": None,
             }
 
             for line in text.strip().split("\n"):
@@ -77,6 +83,14 @@ ANALYSIS: 你的分析内容
                         result["tags"] = [t.strip() for t in tags_str.split(",")]
                 elif line.startswith("ANALYSIS:"):
                     result["analysis"] = line.replace("ANALYSIS:", "").strip()
+                elif line.startswith("NEW_MODEL:"):
+                    new_model_str = line.replace("NEW_MODEL:", "").strip()
+                    if new_model_str and "|" in new_model_str:
+                        parts = new_model_str.split("|", 1)
+                        result["suggested_new_model"] = {
+                            "name": parts[0].strip(),
+                            "description": parts[1].strip() if len(parts) > 1 else "",
+                        }
 
             return result
 
@@ -86,6 +100,7 @@ ANALYSIS: 你的分析内容
                 "matched_models": [],
                 "tags": [],
                 "analysis": f"分析时出错: {str(e)}",
+                "suggested_new_model": None,
             }
 
     def generate_connection(self, idea1: str, idea2: str) -> str:
@@ -155,3 +170,115 @@ ANALYSIS: 你的分析内容
             return response.text.strip()
         except Exception as e:
             return f"生成周报时出错: {str(e)}"
+
+    def search_mental_model(self, keyword: str) -> Optional[dict]:
+        """
+        联网搜索思维模型
+
+        Args:
+            keyword: 搜索关键词
+
+        Returns:
+            dict: {"name": "模型名", "definition": "定义", "key_points": ["要点1", ...], "applications": ["应用1", ...]}
+        """
+        prompt = f"""你是一个思维模型专家。请根据关键词搜索并介绍一个相关的思维模型。
+
+## 搜索关键词
+{keyword}
+
+## 任务
+找到一个与关键词相关的、真实存在的、广为人知的思维模型，并详细介绍。
+
+## 输出格式（严格按照此格式）
+NAME: 思维模型名称
+DEFINITION: 一句话定义
+KEY_POINTS: 要点1; 要点2; 要点3
+APPLICATIONS: 应用场景1; 应用场景2; 应用场景3
+REPRESENTATIVES: 代表人物或来源（如有）
+
+注意：
+- 只推荐真实存在的思维模型，不要编造
+- 如果找不到匹配的模型，NAME 填「未找到」"""
+
+        try:
+            response = self.model.generate_content(prompt)
+            text = response.text
+
+            result = {
+                "name": "",
+                "definition": "",
+                "key_points": [],
+                "applications": [],
+                "representatives": "",
+            }
+
+            for line in text.strip().split("\n"):
+                if line.startswith("NAME:"):
+                    result["name"] = line.replace("NAME:", "").strip()
+                elif line.startswith("DEFINITION:"):
+                    result["definition"] = line.replace("DEFINITION:", "").strip()
+                elif line.startswith("KEY_POINTS:"):
+                    points_str = line.replace("KEY_POINTS:", "").strip()
+                    result["key_points"] = [p.strip() for p in points_str.split(";") if p.strip()]
+                elif line.startswith("APPLICATIONS:"):
+                    apps_str = line.replace("APPLICATIONS:", "").strip()
+                    result["applications"] = [a.strip() for a in apps_str.split(";") if a.strip()]
+                elif line.startswith("REPRESENTATIVES:"):
+                    result["representatives"] = line.replace("REPRESENTATIVES:", "").strip()
+
+            if result["name"] and result["name"] != "未找到":
+                return result
+            return None
+
+        except Exception as e:
+            print(f"搜索思维模型出错: {e}")
+            return None
+
+    def analyze_image(self, image_data: bytes, mime_type: str = "image/jpeg") -> str:
+        """
+        分析图片内容，提取文字或描述
+
+        Args:
+            image_data: 图片二进制数据
+            mime_type: 图片 MIME 类型
+
+        Returns:
+            图片中的文字或内容描述
+        """
+        prompt = """请分析这张图片：
+1. 如果图片中有文字，请提取所有文字内容
+2. 如果是图表、笔记、思维导图等，请描述其主要内容和结构
+3. 如果是其他类型的图片，请简要描述图片内容
+
+直接输出提取或描述的内容，不要有多余的格式。"""
+
+        try:
+            response = self.model.generate_content([
+                prompt,
+                {"mime_type": mime_type, "data": image_data}
+            ])
+            return response.text.strip()
+        except Exception as e:
+            return f"图片分析出错: {str(e)}"
+
+    def transcribe_audio(self, audio_data: bytes, mime_type: str = "audio/ogg") -> str:
+        """
+        语音转文字
+
+        Args:
+            audio_data: 音频二进制数据
+            mime_type: 音频 MIME 类型
+
+        Returns:
+            转录的文字
+        """
+        prompt = "请将这段语音转录为文字，直接输出转录内容，不要有多余的格式。"
+
+        try:
+            response = self.model.generate_content([
+                prompt,
+                {"mime_type": mime_type, "data": audio_data}
+            ])
+            return response.text.strip()
+        except Exception as e:
+            return f"语音转录出错: {str(e)}"
