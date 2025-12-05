@@ -1,26 +1,76 @@
-"""Web应用 - 提供与CEO对话的界面"""
-from fastapi import FastAPI, Request
+"""Web应用 - AI Company完整界面"""
+from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, StreamingResponse
-from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 import json
-import os
-from pathlib import Path
+import asyncio
+from typing import Optional
 
+from ..core.company import Company, AgentInfo, AgentStatus
+from ..core.message import Message
 from ..roles.ceo import CEO
+from ..roles.chro import CHRO
+from ..roles.coo import COO
+from ..memory.store import LocalMemoryStore
 
 
 app = FastAPI(title="AI Company", version="0.1.0")
 
-# 全局CEO实例（v0.1简单处理，后续改为session管理）
-ceo_instance: CEO = None
+# 全局公司实例
+company_instance: Optional[Company] = None
+websocket_connections: list[WebSocket] = []
 
 
-def get_ceo() -> CEO:
-    global ceo_instance
-    if ceo_instance is None:
-        ceo_instance = CEO()
-    return ceo_instance
+def get_company() -> Company:
+    """获取或创建公司实例"""
+    global company_instance
+    if company_instance is None:
+        company_instance = Company()
+
+        # 初始化记忆系统
+        company_instance.memory = LocalMemoryStore()
+
+        # 创建并注册CEO
+        ceo = CEO(company_instance)
+        company_instance.register_agent(
+            "ceo", ceo,
+            AgentInfo(id="ceo", name="CEO", role="ceo", level=1)
+        )
+
+        # 创建并注册CHRO
+        chro = CHRO(company_instance)
+        company_instance.register_agent(
+            "chro", chro,
+            AgentInfo(id="chro", name="CHRO", role="chro", level=1)
+        )
+
+        # 创建并注册COO
+        coo = COO(company_instance)
+        company_instance.register_agent(
+            "coo", coo,
+            AgentInfo(id="coo", name="COO", role="coo", level=1)
+        )
+
+        # 设置消息回调（用于WebSocket推送）
+        async def on_message(message: Message):
+            await broadcast_message(message)
+
+        company_instance.bus.set_user_callback(on_message)
+
+    return company_instance
+
+
+async def broadcast_message(message: Message):
+    """广播消息给所有WebSocket连接"""
+    data = {
+        "type": "message",
+        "data": message.to_dict()
+    }
+    for ws in websocket_connections:
+        try:
+            await ws.send_json(data)
+        except:
+            pass
 
 
 class ChatRequest(BaseModel):
@@ -38,13 +88,9 @@ async def index():
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>AI Company v0.1</title>
     <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
             background: #1a1a2e;
             color: #eee;
             min-height: 100vh;
@@ -59,126 +105,191 @@ async def index():
             justify-content: space-between;
             align-items: center;
         }
-        .header h1 {
-            font-size: 1.5rem;
-            color: #e94560;
-        }
-        .status {
-            font-size: 0.9rem;
-            color: #888;
-        }
-        .status .state {
-            color: #4ecca3;
-            font-weight: bold;
-        }
-        .chat-container {
+        .header h1 { font-size: 1.5rem; color: #e94560; }
+        .header-right { display: flex; gap: 1rem; align-items: center; }
+        .status { font-size: 0.9rem; color: #888; }
+        .status .state { color: #4ecca3; font-weight: bold; }
+
+        .main-container {
             flex: 1;
-            max-width: 900px;
+            display: flex;
+            max-width: 1400px;
             width: 100%;
             margin: 0 auto;
-            padding: 2rem;
+            padding: 1rem;
+            gap: 1rem;
+        }
+
+        /* 左侧聊天区 */
+        .chat-section {
+            flex: 1;
             display: flex;
             flex-direction: column;
+            background: #16213e;
+            border-radius: 12px;
+            padding: 1rem;
         }
         .messages {
             flex: 1;
             overflow-y: auto;
-            padding-bottom: 1rem;
+            padding: 1rem;
+            max-height: calc(100vh - 300px);
         }
-        .message {
-            margin-bottom: 1.5rem;
-            animation: fadeIn 0.3s ease;
-        }
+        .message { margin-bottom: 1rem; animation: fadeIn 0.3s ease; }
         @keyframes fadeIn {
             from { opacity: 0; transform: translateY(10px); }
             to { opacity: 1; transform: translateY(0); }
         }
         .message .role {
-            font-size: 0.85rem;
+            font-size: 0.8rem;
             font-weight: bold;
-            margin-bottom: 0.5rem;
+            margin-bottom: 0.3rem;
         }
-        .message.user .role {
-            color: #4ecca3;
-        }
-        .message.assistant .role {
-            color: #e94560;
-        }
+        .message.user .role { color: #4ecca3; }
+        .message.ceo .role { color: #e94560; }
+        .message.system .role { color: #ffd700; }
         .message .content {
-            background: #16213e;
-            padding: 1rem 1.25rem;
-            border-radius: 12px;
-            line-height: 1.6;
-            white-space: pre-wrap;
-        }
-        .message.user .content {
             background: #0f3460;
-            border-left: 3px solid #4ecca3;
+            padding: 0.8rem 1rem;
+            border-radius: 8px;
+            line-height: 1.5;
+            white-space: pre-wrap;
+            font-size: 0.95rem;
         }
-        .message.assistant .content {
-            border-left: 3px solid #e94560;
-        }
+        .message.user .content { border-left: 3px solid #4ecca3; }
+        .message.ceo .content { border-left: 3px solid #e94560; }
+        .message.system .content { border-left: 3px solid #ffd700; background: #2a2a4a; }
+
         .input-area {
             display: flex;
-            gap: 1rem;
+            gap: 0.5rem;
             padding-top: 1rem;
             border-top: 1px solid #0f3460;
         }
         .input-area textarea {
             flex: 1;
-            padding: 1rem;
+            padding: 0.8rem;
             border: none;
-            border-radius: 12px;
-            background: #16213e;
+            border-radius: 8px;
+            background: #0f3460;
             color: #eee;
-            font-size: 1rem;
+            font-size: 0.95rem;
             resize: none;
-            min-height: 60px;
-            max-height: 150px;
+            min-height: 50px;
         }
-        .input-area textarea:focus {
-            outline: 2px solid #e94560;
-        }
+        .input-area textarea:focus { outline: 2px solid #e94560; }
         .input-area button {
-            padding: 1rem 2rem;
+            padding: 0.8rem 1.5rem;
             border: none;
-            border-radius: 12px;
+            border-radius: 8px;
             background: #e94560;
             color: white;
-            font-size: 1rem;
             cursor: pointer;
             transition: background 0.2s;
         }
-        .input-area button:hover {
-            background: #ff6b6b;
-        }
-        .input-area button:disabled {
-            background: #555;
-            cursor: not-allowed;
-        }
+        .input-area button:hover { background: #ff6b6b; }
+        .input-area button:disabled { background: #555; cursor: not-allowed; }
+
         .actions {
             display: flex;
             gap: 0.5rem;
-            margin-top: 1rem;
+            margin-top: 0.5rem;
         }
         .actions button {
-            padding: 0.5rem 1rem;
+            padding: 0.4rem 0.8rem;
             border: 1px solid #0f3460;
-            border-radius: 8px;
+            border-radius: 6px;
             background: transparent;
             color: #888;
-            font-size: 0.85rem;
+            font-size: 0.8rem;
             cursor: pointer;
-            transition: all 0.2s;
         }
-        .actions button:hover {
-            border-color: #e94560;
+        .actions button:hover { border-color: #e94560; color: #e94560; }
+
+        /* 右侧状态面板 */
+        .status-panel {
+            width: 300px;
+            display: flex;
+            flex-direction: column;
+            gap: 1rem;
+        }
+        .panel {
+            background: #16213e;
+            border-radius: 12px;
+            padding: 1rem;
+        }
+        .panel h3 {
+            font-size: 0.9rem;
             color: #e94560;
+            margin-bottom: 0.8rem;
+            padding-bottom: 0.5rem;
+            border-bottom: 1px solid #0f3460;
         }
-        .typing {
+
+        /* 团队面板 */
+        .team-member {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.5rem;
+            border-radius: 6px;
+            margin-bottom: 0.3rem;
+            background: #0f3460;
+        }
+        .team-member .dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #888;
+        }
+        .team-member .dot.working { background: #4ecca3; animation: pulse 1s infinite; }
+        .team-member .dot.idle { background: #888; }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+        .team-member .name { font-size: 0.85rem; flex: 1; }
+        .team-member .task { font-size: 0.7rem; color: #888; }
+
+        /* 进度面板 */
+        .progress-bar {
+            height: 8px;
+            background: #0f3460;
+            border-radius: 4px;
+            overflow: hidden;
+            margin-bottom: 0.5rem;
+        }
+        .progress-bar .fill {
+            height: 100%;
+            background: #4ecca3;
+            transition: width 0.3s;
+        }
+        .progress-text {
+            font-size: 0.8rem;
+            color: #888;
+            text-align: center;
+        }
+
+        /* 任务列表 */
+        .task-item {
+            padding: 0.5rem;
+            border-radius: 6px;
+            margin-bottom: 0.3rem;
+            background: #0f3460;
+            font-size: 0.8rem;
+        }
+        .task-item.completed { opacity: 0.6; }
+        .task-item .task-status {
             display: inline-block;
-            width: 20px;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            margin-right: 0.5rem;
         }
+        .task-item .task-status.pending { background: #888; }
+        .task-item .task-status.in_progress { background: #ffd700; }
+        .task-item .task-status.completed { background: #4ecca3; }
+
         .typing::after {
             content: '...';
             animation: typing 1s infinite;
@@ -193,30 +304,72 @@ async def index():
 <body>
     <div class="header">
         <h1>AI Company v0.1</h1>
-        <div class="status">
-            状态: <span class="state" id="state">等待中</span>
+        <div class="header-right">
+            <div class="status">状态: <span class="state" id="state">等待中</span></div>
         </div>
     </div>
 
-    <div class="chat-container">
-        <div class="messages" id="messages">
-            <div class="message assistant">
-                <div class="role">CEO</div>
-                <div class="content">你好！我是这家AI公司的CEO。
+    <div class="main-container">
+        <div class="chat-section">
+            <div class="messages" id="messages">
+                <div class="message ceo">
+                    <div class="role">CEO</div>
+                    <div class="content">你好！我是这家AI公司的CEO。
 
 告诉我你想做什么，我会帮你把想法变成可执行的计划。
 
 你有什么想法？</div>
+                </div>
+            </div>
+
+            <div class="input-area">
+                <textarea id="input" placeholder="输入你的想法..." rows="2"></textarea>
+                <button id="send" onclick="sendMessage()">发送</button>
+            </div>
+
+            <div class="actions">
+                <button onclick="resetChat()">重新开始</button>
+                <button onclick="sendCommand('暂停')">暂停</button>
+                <button onclick="sendCommand('继续')">继续</button>
             </div>
         </div>
 
-        <div class="input-area">
-            <textarea id="input" placeholder="输入你的想法..." rows="2"></textarea>
-            <button id="send" onclick="sendMessage()">发送</button>
-        </div>
+        <div class="status-panel">
+            <div class="panel">
+                <h3>团队成员</h3>
+                <div id="team-list">
+                    <div class="team-member">
+                        <span class="dot idle"></span>
+                        <span class="name">CEO</span>
+                        <span class="task">待命</span>
+                    </div>
+                    <div class="team-member">
+                        <span class="dot idle"></span>
+                        <span class="name">CHRO</span>
+                        <span class="task">待命</span>
+                    </div>
+                    <div class="team-member">
+                        <span class="dot idle"></span>
+                        <span class="name">COO</span>
+                        <span class="task">待命</span>
+                    </div>
+                </div>
+            </div>
 
-        <div class="actions">
-            <button onclick="resetChat()">重新开始</button>
+            <div class="panel">
+                <h3>执行进度</h3>
+                <div class="progress-bar">
+                    <div class="fill" id="progress-fill" style="width: 0%"></div>
+                </div>
+                <div class="progress-text" id="progress-text">暂无任务</div>
+            </div>
+
+            <div class="panel">
+                <h3>任务列表</h3>
+                <div id="task-list">
+                    <div style="color: #888; font-size: 0.8rem;">暂无任务</div>
+                </div>
+            </div>
         </div>
     </div>
 
@@ -225,8 +378,38 @@ async def index():
         const inputEl = document.getElementById('input');
         const sendBtn = document.getElementById('send');
         const stateEl = document.getElementById('state');
+        const teamListEl = document.getElementById('team-list');
+        const progressFillEl = document.getElementById('progress-fill');
+        const progressTextEl = document.getElementById('progress-text');
+        const taskListEl = document.getElementById('task-list');
 
-        // Enter发送
+        let ws = null;
+
+        // 连接WebSocket
+        function connectWebSocket() {
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            ws = new WebSocket(`${protocol}//${window.location.host}/ws`);
+
+            ws.onmessage = (event) => {
+                const data = JSON.parse(event.data);
+                if (data.type === 'message') {
+                    handleSystemMessage(data.data);
+                } else if (data.type === 'status') {
+                    updateStatusPanel(data.data);
+                }
+            };
+
+            ws.onclose = () => {
+                setTimeout(connectWebSocket, 3000);
+            };
+        }
+
+        function handleSystemMessage(msg) {
+            if (msg.from_agent !== 'user' && msg.from_agent !== 'ceo') {
+                addMessage('system', `[${msg.from_agent}] ${msg.content}`, msg.from_agent);
+            }
+        }
+
         inputEl.addEventListener('keydown', (e) => {
             if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault();
@@ -238,19 +421,14 @@ async def index():
             const message = inputEl.value.trim();
             if (!message) return;
 
-            // 禁用输入
             inputEl.disabled = true;
             sendBtn.disabled = true;
-
-            // 显示用户消息
             addMessage('user', message);
             inputEl.value = '';
 
-            // 显示typing indicator
-            const assistantMsg = addMessage('assistant', '<span class="typing"></span>', true);
+            const assistantMsg = addMessage('ceo', '<span class="typing"></span>', 'ceo', true);
 
             try {
-                // 调用API（流式）
                 const response = await fetch('/api/chat/stream', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -264,31 +442,36 @@ async def index():
                 while (true) {
                     const { done, value } = await reader.read();
                     if (done) break;
-
-                    const chunk = decoder.decode(value);
-                    fullContent += chunk;
+                    fullContent += decoder.decode(value);
                     assistantMsg.querySelector('.content').textContent = fullContent;
                     messagesEl.scrollTop = messagesEl.scrollHeight;
                 }
 
-                // 更新状态
-                updateState();
-
+                updateStatus();
             } catch (error) {
                 assistantMsg.querySelector('.content').textContent = '出错了: ' + error.message;
             }
 
-            // 恢复输入
             inputEl.disabled = false;
             sendBtn.disabled = false;
             inputEl.focus();
         }
 
-        function addMessage(role, content, isHtml = false) {
+        async function sendCommand(cmd) {
+            await fetch('/api/command', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ command: cmd })
+            });
+            updateStatus();
+        }
+
+        function addMessage(role, content, agent = '', isHtml = false) {
             const div = document.createElement('div');
             div.className = `message ${role}`;
+            const roleName = role === 'user' ? '你' : (agent || 'CEO').toUpperCase();
             div.innerHTML = `
-                <div class="role">${role === 'user' ? '你' : 'CEO'}</div>
+                <div class="role">${roleName}</div>
                 <div class="content">${isHtml ? content : escapeHtml(content)}</div>
             `;
             messagesEl.appendChild(div);
@@ -302,30 +485,63 @@ async def index():
             return div.innerHTML;
         }
 
-        async function updateState() {
+        async function updateStatus() {
             try {
-                const response = await fetch('/api/state');
+                const response = await fetch('/api/status');
                 const data = await response.json();
-                const stateMap = {
-                    'idle': '等待中',
-                    'exploring': '需求探索中',
-                    'planning': '计划制定中',
-                    'executing': '执行中',
-                    'reviewing': '验收中'
-                };
-                stateEl.textContent = stateMap[data.state] || data.state;
+                updateStatusPanel(data);
             } catch (e) {
                 console.error(e);
             }
         }
 
+        function updateStatusPanel(data) {
+            // 更新状态
+            const stateMap = {
+                'idle': '等待中',
+                'exploring': '需求探索中',
+                'planning': '计划制定中',
+                'executing': '执行中',
+                'reviewing': '验收中'
+            };
+            stateEl.textContent = stateMap[data.ceo_state] || data.ceo_state || '等待中';
+
+            // 更新团队列表
+            if (data.agents) {
+                teamListEl.innerHTML = data.agents.map(agent => `
+                    <div class="team-member">
+                        <span class="dot ${agent.status === 'working' ? 'working' : 'idle'}"></span>
+                        <span class="name">${agent.name}</span>
+                        <span class="task">${agent.current_task || '待命'}</span>
+                    </div>
+                `).join('');
+            }
+
+            // 更新进度
+            if (data.progress) {
+                const percent = data.progress.progress_percent || 0;
+                progressFillEl.style.width = percent + '%';
+                progressTextEl.textContent = `${data.progress.completed || 0}/${data.progress.total_tasks || 0} 完成`;
+
+                // 更新任务列表
+                if (data.progress.tasks && data.progress.tasks.length > 0) {
+                    taskListEl.innerHTML = data.progress.tasks.map(task => `
+                        <div class="task-item ${task.status}">
+                            <span class="task-status ${task.status}"></span>
+                            ${task.description}
+                        </div>
+                    `).join('');
+                } else {
+                    taskListEl.innerHTML = '<div style="color: #888; font-size: 0.8rem;">暂无任务</div>';
+                }
+            }
+        }
+
         async function resetChat() {
             if (!confirm('确定要重新开始吗？')) return;
-
             await fetch('/api/reset', { method: 'POST' });
-
             messagesEl.innerHTML = `
-                <div class="message assistant">
+                <div class="message ceo">
                     <div class="role">CEO</div>
                     <div class="content">你好！我是这家AI公司的CEO。
 
@@ -334,13 +550,16 @@ async def index():
 你有什么想法？</div>
                 </div>
             `;
-
-            updateState();
+            updateStatus();
         }
 
         // 初始化
-        updateState();
+        connectWebSocket();
+        updateStatus();
         inputEl.focus();
+
+        // 定期更新状态
+        setInterval(updateStatus, 5000);
     </script>
 </body>
 </html>
@@ -348,10 +567,23 @@ async def index():
     return HTMLResponse(content=html_content)
 
 
+@app.websocket("/ws")
+async def websocket_endpoint(websocket: WebSocket):
+    """WebSocket连接，用于实时推送消息"""
+    await websocket.accept()
+    websocket_connections.append(websocket)
+    try:
+        while True:
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        websocket_connections.remove(websocket)
+
+
 @app.post("/api/chat")
 async def chat(request: ChatRequest):
     """普通对话"""
-    ceo = get_ceo()
+    company = get_company()
+    ceo = company.get_agent("ceo")
     response = await ceo.chat(request.message)
     return {"response": response, "state": ceo.get_state()}
 
@@ -359,7 +591,8 @@ async def chat(request: ChatRequest):
 @app.post("/api/chat/stream")
 async def chat_stream(request: ChatRequest):
     """流式对话"""
-    ceo = get_ceo()
+    company = get_company()
+    ceo = company.get_agent("ceo")
 
     async def generate():
         async for chunk in ceo.stream_chat(request.message):
@@ -370,14 +603,58 @@ async def chat_stream(request: ChatRequest):
 
 @app.get("/api/state")
 async def get_state():
-    """获取当前状态"""
-    ceo = get_ceo()
+    """获取CEO状态（兼容旧接口）"""
+    company = get_company()
+    ceo = company.get_agent("ceo")
     return ceo.get_state()
+
+
+@app.get("/api/status")
+async def get_status():
+    """获取公司完整状态"""
+    company = get_company()
+    ceo = company.get_agent("ceo")
+    coo = company.get_agent("coo")
+
+    return {
+        "ceo_state": ceo.state,
+        "agents": [
+            {
+                "id": info.id,
+                "name": info.name,
+                "role": info.role,
+                "status": info.status.value,
+                "current_task": info.current_task
+            }
+            for info in company.agent_info.values()
+        ],
+        "progress": coo.get_progress() if coo else None,
+        "project": company.current_project
+    }
+
+
+@app.post("/api/command")
+async def send_command(request: dict):
+    """发送用户命令"""
+    company = get_company()
+    command = request.get("command", "")
+
+    # 创建用户消息
+    message = Message(
+        content=command,
+        from_agent="user",
+        to_agent="coo",
+        msg_type="user_command"
+    )
+    await company.bus.publish(message)
+
+    return {"status": "ok"}
 
 
 @app.post("/api/reset")
 async def reset():
-    """重置对话"""
-    ceo = get_ceo()
-    ceo.reset()
+    """重置公司"""
+    global company_instance
+    company_instance = None
+    websocket_connections.clear()
     return {"status": "ok"}
