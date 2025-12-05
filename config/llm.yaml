@@ -1,7 +1,7 @@
 # LLM配置 - 支持多种Provider
-# 使用环境变量设置API Key: OPENAI_API_KEY 或 ANTHROPIC_API_KEY
+# 使用环境变量设置API Key: OPENAI_API_KEY / ANTHROPIC_API_KEY / GEMINI_API_KEY
 
-default_provider: openai
+default_provider: gemini
 
 providers:
   openai:
@@ -10,6 +10,9 @@ providers:
 
   claude:
     model: claude-3-opus-20240229
+
+  gemini:
+    model: gemini-1.5-pro
 
   # 本地模型（如Ollama）
   local:

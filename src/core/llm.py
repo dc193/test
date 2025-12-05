@@ -100,6 +100,78 @@ class ClaudeProvider(LLMProvider):
                 yield text
 
 
+class GeminiProvider(LLMProvider):
+    """Google Gemini接口"""
+
+    def __init__(self, api_key: str, model: str):
+        import google.generativeai as genai
+        genai.configure(api_key=api_key)
+        self.model = genai.GenerativeModel(model)
+        self.model_name = model
+
+    def _convert_messages(self, messages: list[dict]) -> tuple[str, list[dict]]:
+        """转换消息格式（OpenAI格式 -> Gemini格式）"""
+        system = None
+        gemini_messages = []
+
+        for msg in messages:
+            if msg["role"] == "system":
+                system = msg["content"]
+            elif msg["role"] == "user":
+                gemini_messages.append({
+                    "role": "user",
+                    "parts": [msg["content"]]
+                })
+            elif msg["role"] == "assistant":
+                gemini_messages.append({
+                    "role": "model",
+                    "parts": [msg["content"]]
+                })
+
+        return system, gemini_messages
+
+    async def chat(self, messages: list[dict], **kwargs) -> str:
+        import google.generativeai as genai
+
+        system, gemini_messages = self._convert_messages(messages)
+
+        # 如果有system prompt，创建带system instruction的模型
+        if system:
+            model = genai.GenerativeModel(self.model_name, system_instruction=system)
+        else:
+            model = self.model
+
+        response = await model.generate_content_async(
+            gemini_messages,
+            generation_config=genai.types.GenerationConfig(
+                max_output_tokens=4096,
+            )
+        )
+        return response.text
+
+    async def stream_chat(self, messages: list[dict], **kwargs) -> AsyncGenerator[str, None]:
+        import google.generativeai as genai
+
+        system, gemini_messages = self._convert_messages(messages)
+
+        if system:
+            model = genai.GenerativeModel(self.model_name, system_instruction=system)
+        else:
+            model = self.model
+
+        response = await model.generate_content_async(
+            gemini_messages,
+            generation_config=genai.types.GenerationConfig(
+                max_output_tokens=4096,
+            ),
+            stream=True
+        )
+
+        async for chunk in response:
+            if chunk.text:
+                yield chunk.text
+
+
 def load_config(config_path: str = "config/llm.yaml") -> dict:
     """加载配置文件"""
     with open(config_path, "r") as f:
@@ -119,6 +191,14 @@ def create_llm_provider(provider_name: Optional[str] = None, config_path: str = 
         return ClaudeProvider(
             api_key=api_key,
             model=provider_config.get("model", "claude-3-opus-20240229")
+        )
+    elif provider_name == "gemini":
+        api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+        if not api_key:
+            raise ValueError("请设置 GEMINI_API_KEY 或 GOOGLE_API_KEY 环境变量")
+        return GeminiProvider(
+            api_key=api_key,
+            model=provider_config.get("model", "gemini-1.5-pro")
         )
     else:
         # OpenAI或兼容接口
