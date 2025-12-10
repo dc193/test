@@ -116,7 +116,48 @@ class ObsidianVault:
         full_content = "\n".join(frontmatter_lines + body_lines)
         filepath.write_text(full_content, encoding="utf-8")
 
+        # 建立双向链接 - 更新关联的思维模型文件
+        if models:
+            idea_link = f"[[{filepath.stem}]]"
+            for model_name in models:
+                self._add_idea_link_to_model(model_name, idea_link)
+
         return str(filepath)
+
+    def _add_idea_link_to_model(self, model_name: str, idea_link: str):
+        """
+        在思维模型文件的「相关灵感」部分添加灵感链接
+
+        Args:
+            model_name: 思维模型名称
+            idea_link: 灵感链接，格式为 [[灵感文件名]]
+        """
+        model_path = self.models_dir / f"{model_name}.md"
+        if not model_path.exists():
+            return
+
+        try:
+            content = model_path.read_text(encoding="utf-8")
+
+            # 检查链接是否已存在
+            if idea_link in content:
+                return
+
+            # 找到「## 相关灵感」部分并添加链接
+            if "## 相关灵感" in content:
+                # 在「## 相关灵感」后添加链接
+                content = content.replace(
+                    "## 相关灵感\n",
+                    f"## 相关灵感\n\n- {idea_link}\n"
+                )
+            else:
+                # 如果没有这个部分，在文件末尾添加
+                content += f"\n## 相关灵感\n\n- {idea_link}\n"
+
+            model_path.write_text(content, encoding="utf-8")
+
+        except Exception as e:
+            print(f"[WARN] 更新模型 {model_name} 的相关灵感失败: {e}")
 
     def get_all_models(self) -> list[dict]:
         """获取所有思维模型"""
