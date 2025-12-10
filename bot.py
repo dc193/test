@@ -557,14 +557,18 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             del pending_ideas[user_id]
 
-            models_text = ""
-            if idea_data["models"]:
-                models_text = f"\n关联: {', '.join(idea_data['models'])}"
+            # 构建保留分析内容的回复
+            reply_text = "✅ **灵感已保存**\n\n"
+            reply_text += f"_{idea_data['content'][:100]}{'...' if len(idea_data['content']) > 100 else ''}_\n\n"
 
-            await query.edit_message_text(
-                f"✅ **灵感已保存**{models_text}\n\n继续发送下一个灵感吧！",
-                parse_mode="Markdown",
-            )
+            if idea_data["models"]:
+                reply_text += f"**关联思维模型**: {', '.join(idea_data['models'])}\n"
+            if idea_data["tags"]:
+                reply_text += f"**标签**: {', '.join(idea_data['tags'])}\n"
+            if idea_data["analysis"]:
+                reply_text += f"\n**AI 分析**: {idea_data['analysis']}\n"
+
+            await query.edit_message_text(reply_text, parse_mode="Markdown")
 
         elif data == "save_idea_with_model":
             # 添加新模型 - 先搜索获取完整信息
@@ -614,10 +618,18 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             del pending_ideas[user_id]
 
-            await query.edit_message_text(
-                f"✅ **灵感已保存**{model_msg}\n\n继续发送下一个灵感吧！",
-                parse_mode="Markdown",
-            )
+            # 构建保留分析内容的回复
+            reply_text = f"✅ **灵感已保存**{model_msg}\n\n"
+            reply_text += f"_{idea_data['content'][:100]}{'...' if len(idea_data['content']) > 100 else ''}_\n\n"
+
+            if models_to_link:
+                reply_text += f"**关联思维模型**: {', '.join(models_to_link)}\n"
+            if idea_data["tags"]:
+                reply_text += f"**标签**: {', '.join(idea_data['tags'])}\n"
+            if idea_data["analysis"]:
+                reply_text += f"\n**AI 分析**: {idea_data['analysis']}\n"
+
+            await query.edit_message_text(reply_text, parse_mode="Markdown")
 
         elif data == "save_plain":
             # 仅保存原文
