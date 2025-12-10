@@ -567,22 +567,17 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
 
         elif data == "save_idea_with_model":
-            # 保存灵感并添加新模型
-            idea_filepath = vault.save_idea(
-                content=idea_data["content"],
-                models=idea_data["models"],
-                tags=idea_data["tags"],
-                ai_analysis=idea_data["analysis"],
-            )
-
             # 添加新模型 - 先搜索获取完整信息
             new_model = idea_data.get("suggested_new_model")
             model_msg = ""
+            new_model_name = None
+
             if new_model:
                 # 使用 AI 搜索获取完整的模型信息
                 full_model_info = analyzer.search_mental_model(new_model["name"])
 
                 if full_model_info:
+                    new_model_name = full_model_info["name"]
                     # 使用搜索到的完整信息
                     result = vault.save_model(
                         name=full_model_info["name"],
@@ -592,6 +587,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         representatives=full_model_info.get("representatives"),
                     )
                 else:
+                    new_model_name = new_model["name"]
                     # 搜索失败，使用原始信息
                     result = vault.save_model(
                         name=new_model["name"],
@@ -599,9 +595,22 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     )
 
                 if result:
-                    model_msg = f"\n✅ **已添加新模型「{new_model['name']}」**"
+                    model_msg = f"\n✅ **已添加新模型「{new_model_name}」**"
                 else:
-                    model_msg = f"\n⚠️ 模型「{new_model['name']}」已存在，跳过添加"
+                    model_msg = f"\n⚠️ 模型「{new_model_name}」已存在，跳过添加"
+                    new_model_name = None  # 模型已存在，不需要再添加链接
+
+            # 保存灵感 - 把新模型也加入关联列表
+            models_to_link = list(idea_data["models"]) if idea_data["models"] else []
+            if new_model_name and new_model_name not in models_to_link:
+                models_to_link.append(new_model_name)
+
+            vault.save_idea(
+                content=idea_data["content"],
+                models=models_to_link,
+                tags=idea_data["tags"],
+                ai_analysis=idea_data["analysis"],
+            )
 
             del pending_ideas[user_id]
 

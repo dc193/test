@@ -145,14 +145,14 @@ class ObsidianVault:
 
             # 找到「## 相关灵感」部分并添加链接
             if "## 相关灵感" in content:
-                # 在「## 相关灵感」后添加链接
-                content = content.replace(
-                    "## 相关灵感\n",
-                    f"## 相关灵感\n\n- {idea_link}\n"
-                )
+                # 使用正则表达式更健壮地匹配和替换
+                match = re.search(r"(## 相关灵感\n*)", content)
+                if match:
+                    insert_pos = match.end()
+                    content = content[:insert_pos] + f"\n- {idea_link}" + content[insert_pos:]
             else:
                 # 如果没有这个部分，在文件末尾添加
-                content += f"\n## 相关灵感\n\n- {idea_link}\n"
+                content = content.rstrip() + f"\n\n## 相关灵感\n\n- {idea_link}\n"
 
             model_path.write_text(content, encoding="utf-8")
 
