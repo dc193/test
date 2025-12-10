@@ -278,9 +278,9 @@ class ObsidianVault:
         filename = f"{name}.md"
         filepath = self.models_dir / filename
 
-        # 如果已存在则不覆盖
+        # 如果已存在则返回 None 表示未创建
         if filepath.exists():
-            return str(filepath)
+            return None
 
         # 构建内容
         lines = [

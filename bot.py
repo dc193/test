@@ -577,16 +577,21 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             # 添加新模型
             new_model = idea_data.get("suggested_new_model")
+            model_msg = ""
             if new_model:
-                vault.save_model(
+                result = vault.save_model(
                     name=new_model["name"],
                     definition=new_model["description"],
                 )
+                if result:
+                    model_msg = f"\n✅ **已添加新模型「{new_model['name']}」**"
+                else:
+                    model_msg = f"\n⚠️ 模型「{new_model['name']}」已存在，跳过添加"
 
             del pending_ideas[user_id]
 
             await query.edit_message_text(
-                f"✅ **灵感已保存**\n✅ **已添加新模型「{new_model['name']}」**\n\n继续发送下一个灵感吧！",
+                f"✅ **灵感已保存**{model_msg}\n\n继续发送下一个灵感吧！",
                 parse_mode="Markdown",
             )
 
