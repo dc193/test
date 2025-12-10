@@ -273,65 +273,76 @@ class ObsidianVault:
             representatives: 代表人物
 
         Returns:
-            保存的文件路径
+            保存的文件路径，失败返回 None
         """
-        filename = f"{name}.md"
+        # 清理文件名中的非法字符
+        safe_name = name.replace("/", "-").replace("\\", "-").replace(":", "-")
+        filename = f"{safe_name}.md"
         filepath = self.models_dir / filename
+
+        print(f"[DEBUG] 尝试保存模型: {name} -> {filepath}")
 
         # 如果已存在则返回 None 表示未创建
         if filepath.exists():
+            print(f"[DEBUG] 模型已存在: {filepath}")
             return None
 
-        # 构建内容
-        lines = [
-            "---",
-            f"tags: [思维模型]",
-            f"created: {datetime.now().strftime('%Y-%m-%d')}",
-            "---",
-            "",
-            f"# {name}",
-            "",
-            "## 定义",
-            "",
-            definition,
-            "",
-        ]
+        try:
+            # 构建内容
+            lines = [
+                "---",
+                f"tags: [思维模型]",
+                f"created: {datetime.now().strftime('%Y-%m-%d')}",
+                "---",
+                "",
+                f"# {name}",
+                "",
+                "## 定义",
+                "",
+                definition,
+                "",
+            ]
 
-        if key_points:
+            if key_points:
+                lines.extend([
+                    "## 核心要点",
+                    "",
+                ])
+                for point in key_points:
+                    lines.append(f"- {point}")
+                lines.append("")
+
+            if applications:
+                lines.extend([
+                    "## 典型应用",
+                    "",
+                ])
+                for app in applications:
+                    lines.append(f"- {app}")
+                lines.append("")
+
+            if representatives:
+                lines.extend([
+                    "## 代表人物",
+                    "",
+                    representatives,
+                    "",
+                ])
+
             lines.extend([
-                "## 核心要点",
+                "## 相关灵感",
                 "",
             ])
-            for point in key_points:
-                lines.append(f"- {point}")
-            lines.append("")
 
-        if applications:
-            lines.extend([
-                "## 典型应用",
-                "",
-            ])
-            for app in applications:
-                lines.append(f"- {app}")
-            lines.append("")
+            content = "\n".join(lines)
+            filepath.write_text(content, encoding="utf-8")
+            print(f"[DEBUG] 模型保存成功: {filepath}")
 
-        if representatives:
-            lines.extend([
-                "## 代表人物",
-                "",
-                representatives,
-                "",
-            ])
+            return str(filepath)
 
-        lines.extend([
-            "## 相关灵感",
-            "",
-        ])
-
-        content = "\n".join(lines)
-        filepath.write_text(content, encoding="utf-8")
-
-        return str(filepath)
+        except Exception as e:
+            print(f"[ERROR] 保存模型失败: {e}")
+            return None
 
     def delete_model(self, name: str) -> bool:
         """
