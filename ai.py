@@ -11,7 +11,7 @@ class IdeaAnalyzer:
 
     def __init__(self, api_key: str):
         genai.configure(api_key=api_key)
-        self.model = genai.GenerativeModel("gemini-pro")
+        self.model = genai.GenerativeModel("models/gemini-2.0-flash")
 
     def analyze_idea(self, idea: str, available_models: list[str]) -> dict:
         """
