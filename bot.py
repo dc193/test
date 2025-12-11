@@ -704,12 +704,15 @@ def main():
     # AI 配置
     ai_provider = os.getenv("AI_PROVIDER", "gemini").lower()
     ai_model = os.getenv("AI_MODEL", "")
+    local_api_base = os.getenv("LOCAL_API_BASE", "http://localhost:11434/v1")
 
     # 根据提供商获取对应的 API Key
     ai_key_map = {
         "gemini": os.getenv("GOOGLE_AI_API_KEY"),
         "openai": os.getenv("OPENAI_API_KEY"),
         "claude": os.getenv("ANTHROPIC_API_KEY"),
+        "grok": os.getenv("XAI_API_KEY"),
+        "local": os.getenv("LOCAL_API_KEY", "not-needed"),
     }
     ai_key = ai_key_map.get(ai_provider)
 
@@ -718,11 +721,12 @@ def main():
         print("❌ 请在 .env 文件中设置 TELEGRAM_BOT_TOKEN")
         return
 
-    if not ai_key:
+    if not ai_key and ai_provider != "local":
         key_name = {
             "gemini": "GOOGLE_AI_API_KEY",
             "openai": "OPENAI_API_KEY",
             "claude": "ANTHROPIC_API_KEY",
+            "grok": "XAI_API_KEY",
         }.get(ai_provider, "API_KEY")
         print(f"❌ 请在 .env 文件中设置 {key_name}")
         return
@@ -749,8 +753,12 @@ def main():
     print(f"✅ Vault 路径: {vault_path}")
 
     # 初始化 AI
-    analyzer = create_analyzer(ai_provider, ai_key, ai_model if ai_model else None)
-    print(f"✅ AI 分析器已初始化 ({ai_provider}: {ai_model or '默认模型'})")
+    if ai_provider == "local":
+        analyzer = create_analyzer(ai_provider, ai_key, ai_model if ai_model else None, local_api_base)
+        print(f"✅ AI 分析器已初始化 ({ai_provider}: {ai_model or '默认模型'} @ {local_api_base})")
+    else:
+        analyzer = create_analyzer(ai_provider, ai_key, ai_model if ai_model else None)
+        print(f"✅ AI 分析器已初始化 ({ai_provider}: {ai_model or '默认模型'})")
 
     # 创建 Bot
     app = Application.builder().token(token).build()

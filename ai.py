@@ -376,6 +376,172 @@ class OpenAIAnalyzer(BaseAnalyzer):
             return f"语音转录出错: {str(e)}"
 
 
+class GrokAnalyzer(BaseAnalyzer):
+    """xAI Grok 分析器（OpenAI 兼容接口）"""
+
+    def __init__(self, api_key: str, model: str = "grok-2-latest"):
+        from openai import OpenAI
+        self.client = OpenAI(
+            api_key=api_key,
+            base_url="https://api.x.ai/v1"
+        )
+        self.model_name = model
+
+    def _chat(self, prompt: str) -> str:
+        """发送聊天请求"""
+        response = self.client.chat.completions.create(
+            model=self.model_name,
+            messages=[{"role": "user", "content": prompt}]
+        )
+        return response.choices[0].message.content
+
+    def analyze_idea(self, idea: str, available_models: list[str]) -> dict:
+        models_list = "\n".join([f"- {m}" for m in available_models])
+        prompt = self._get_analyze_idea_prompt(idea, models_list)
+
+        try:
+            text = self._chat(prompt)
+            return self._parse_idea_analysis(text, available_models)
+        except Exception as e:
+            print(f"AI 分析错误: {e}")
+            return {
+                "matched_models": [],
+                "tags": [],
+                "analysis": f"分析时出错: {str(e)}",
+                "suggested_new_model": None,
+            }
+
+    def generate_connection(self, idea1: str, idea2: str) -> str:
+        prompt = self._get_connection_prompt(idea1, idea2)
+        try:
+            return self._chat(prompt).strip()
+        except Exception as e:
+            return f"分析时出错: {str(e)}"
+
+    def generate_weekly_summary(self, ideas: list[dict], models_used: dict) -> str:
+        prompt = self._get_weekly_summary_prompt(ideas, models_used)
+        try:
+            return self._chat(prompt).strip()
+        except Exception as e:
+            return f"生成周报时出错: {str(e)}"
+
+    def search_mental_model(self, keyword: str) -> Optional[dict]:
+        prompt = self._get_search_model_prompt(keyword)
+        try:
+            text = self._chat(prompt)
+            return self._parse_model_search(text)
+        except Exception as e:
+            print(f"搜索思维模型出错: {e}")
+            return None
+
+    def analyze_image(self, image_data: bytes, mime_type: str = "image/jpeg") -> str:
+        import base64
+        prompt = self._get_image_prompt()
+        base64_image = base64.b64encode(image_data).decode("utf-8")
+
+        try:
+            response = self.client.chat.completions.create(
+                model=self.model_name,
+                messages=[{
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": prompt},
+                        {"type": "image_url", "image_url": {"url": f"data:{mime_type};base64,{base64_image}"}}
+                    ]
+                }]
+            )
+            return response.choices[0].message.content.strip()
+        except Exception as e:
+            return f"图片分析出错: {str(e)}"
+
+    def transcribe_audio(self, audio_data: bytes, mime_type: str = "audio/ogg") -> str:
+        return "语音转录出错: Grok 暂不支持语音转录，请使用 Gemini 或 OpenAI"
+
+
+class LocalAnalyzer(BaseAnalyzer):
+    """本地模型分析器（Ollama、LM Studio 等 OpenAI 兼容接口）"""
+
+    def __init__(self, api_key: str, model: str = "qwen2.5:7b", base_url: str = "http://localhost:11434/v1"):
+        from openai import OpenAI
+        self.client = OpenAI(
+            api_key=api_key or "not-needed",  # 本地模型通常不需要 key
+            base_url=base_url
+        )
+        self.model_name = model
+        self.base_url = base_url
+
+    def _chat(self, prompt: str) -> str:
+        """发送聊天请求"""
+        response = self.client.chat.completions.create(
+            model=self.model_name,
+            messages=[{"role": "user", "content": prompt}]
+        )
+        return response.choices[0].message.content
+
+    def analyze_idea(self, idea: str, available_models: list[str]) -> dict:
+        models_list = "\n".join([f"- {m}" for m in available_models])
+        prompt = self._get_analyze_idea_prompt(idea, models_list)
+
+        try:
+            text = self._chat(prompt)
+            return self._parse_idea_analysis(text, available_models)
+        except Exception as e:
+            print(f"AI 分析错误: {e}")
+            return {
+                "matched_models": [],
+                "tags": [],
+                "analysis": f"分析时出错: {str(e)}",
+                "suggested_new_model": None,
+            }
+
+    def generate_connection(self, idea1: str, idea2: str) -> str:
+        prompt = self._get_connection_prompt(idea1, idea2)
+        try:
+            return self._chat(prompt).strip()
+        except Exception as e:
+            return f"分析时出错: {str(e)}"
+
+    def generate_weekly_summary(self, ideas: list[dict], models_used: dict) -> str:
+        prompt = self._get_weekly_summary_prompt(ideas, models_used)
+        try:
+            return self._chat(prompt).strip()
+        except Exception as e:
+            return f"生成周报时出错: {str(e)}"
+
+    def search_mental_model(self, keyword: str) -> Optional[dict]:
+        prompt = self._get_search_model_prompt(keyword)
+        try:
+            text = self._chat(prompt)
+            return self._parse_model_search(text)
+        except Exception as e:
+            print(f"搜索思维模型出错: {e}")
+            return None
+
+    def analyze_image(self, image_data: bytes, mime_type: str = "image/jpeg") -> str:
+        import base64
+        prompt = self._get_image_prompt()
+        base64_image = base64.b64encode(image_data).decode("utf-8")
+
+        try:
+            # 尝试多模态，部分本地模型支持
+            response = self.client.chat.completions.create(
+                model=self.model_name,
+                messages=[{
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": prompt},
+                        {"type": "image_url", "image_url": {"url": f"data:{mime_type};base64,{base64_image}"}}
+                    ]
+                }]
+            )
+            return response.choices[0].message.content.strip()
+        except Exception as e:
+            return f"图片分析出错: {str(e)}（本地模型可能不支持图片）"
+
+    def transcribe_audio(self, audio_data: bytes, mime_type: str = "audio/ogg") -> str:
+        return "语音转录出错: 本地模型暂不支持语音转录，请使用 Gemini 或 OpenAI"
+
+
 class ClaudeAnalyzer(BaseAnalyzer):
     """Anthropic Claude 分析器"""
 
@@ -458,14 +624,15 @@ class ClaudeAnalyzer(BaseAnalyzer):
         return "语音转录出错: Claude 暂不支持语音转录，请使用 Gemini 或 OpenAI"
 
 
-def create_analyzer(provider: str, api_key: str, model: str = None) -> BaseAnalyzer:
+def create_analyzer(provider: str, api_key: str, model: str = None, base_url: str = None) -> BaseAnalyzer:
     """
     创建 AI 分析器
 
     Args:
-        provider: AI 提供商 (gemini, openai, claude)
+        provider: AI 提供商 (gemini, openai, claude, grok, local)
         api_key: API Key
         model: 模型名称（可选，不指定则使用默认）
+        base_url: API 地址（仅 local 需要）
 
     Returns:
         对应的分析器实例
@@ -478,8 +645,12 @@ def create_analyzer(provider: str, api_key: str, model: str = None) -> BaseAnaly
         return OpenAIAnalyzer(api_key, model or "gpt-4o-mini")
     elif provider == "claude":
         return ClaudeAnalyzer(api_key, model or "claude-sonnet-4-20250514")
+    elif provider == "grok":
+        return GrokAnalyzer(api_key, model or "grok-2-latest")
+    elif provider == "local":
+        return LocalAnalyzer(api_key, model or "qwen2.5:7b", base_url or "http://localhost:11434/v1")
     else:
-        raise ValueError(f"不支持的 AI 提供商: {provider}，可选: gemini, openai, claude")
+        raise ValueError(f"不支持的 AI 提供商: {provider}，可选: gemini, openai, claude, grok, local")
 
 
 # 保持向后兼容
