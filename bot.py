@@ -21,7 +21,7 @@ from telegram.ext import (
 )
 
 from vault import ObsidianVault
-from ai import IdeaAnalyzer
+from ai import create_analyzer
 
 # 加载环境变量
 load_dotenv()
@@ -698,9 +698,20 @@ def main():
 
     # 读取配置
     token = os.getenv("TELEGRAM_BOT_TOKEN")
-    ai_key = os.getenv("GOOGLE_AI_API_KEY")
     vault_path = os.getenv("OBSIDIAN_VAULT_PATH")
     allowed_users_str = os.getenv("ALLOWED_USER_IDS", "")
+
+    # AI 配置
+    ai_provider = os.getenv("AI_PROVIDER", "gemini").lower()
+    ai_model = os.getenv("AI_MODEL", "")
+
+    # 根据提供商获取对应的 API Key
+    ai_key_map = {
+        "gemini": os.getenv("GOOGLE_AI_API_KEY"),
+        "openai": os.getenv("OPENAI_API_KEY"),
+        "claude": os.getenv("ANTHROPIC_API_KEY"),
+    }
+    ai_key = ai_key_map.get(ai_provider)
 
     # 验证配置
     if not token:
@@ -708,7 +719,12 @@ def main():
         return
 
     if not ai_key:
-        print("❌ 请在 .env 文件中设置 GOOGLE_AI_API_KEY")
+        key_name = {
+            "gemini": "GOOGLE_AI_API_KEY",
+            "openai": "OPENAI_API_KEY",
+            "claude": "ANTHROPIC_API_KEY",
+        }.get(ai_provider, "API_KEY")
+        print(f"❌ 请在 .env 文件中设置 {key_name}")
         return
 
     if not vault_path:
@@ -733,8 +749,8 @@ def main():
     print(f"✅ Vault 路径: {vault_path}")
 
     # 初始化 AI
-    analyzer = IdeaAnalyzer(ai_key)
-    print("✅ AI 分析器已初始化")
+    analyzer = create_analyzer(ai_provider, ai_key, ai_model if ai_model else None)
+    print(f"✅ AI 分析器已初始化 ({ai_provider}: {ai_model or '默认模型'})")
 
     # 创建 Bot
     app = Application.builder().token(token).build()
