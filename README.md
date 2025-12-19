@@ -30,11 +30,21 @@
 ## 架构
 
 ```
-Telegram Bot ←→ Google Gemini 2.5 Flash ←→ Obsidian Vault
-  (交互)              (分析)                  (存储)
-    ↓
-  文字/语音/图片
+Telegram Bot ←→ AI 分析器 ←→ Obsidian Vault
+  (交互)         (分析)        (存储)
+    ↓              ↓
+  文字/语音/图片    支持多种 AI 后端
 ```
+
+## 支持的 AI 后端
+
+| 提供商 | 默认模型 | 多模态 | 语音 | 说明 |
+|--------|----------|--------|------|------|
+| Gemini | gemini-2.5-flash | ✅ | ✅ | 免费额度高，推荐 |
+| OpenAI | gpt-4o-mini | ✅ | ✅ | Whisper 转录 |
+| Claude | claude-sonnet-4-20250514 | ✅ | ❌ | 质量高 |
+| Grok | grok-2-latest | ✅ | ❌ | xAI |
+| Local | qwen2.5:7b | 部分 | ❌ | Ollama/LM Studio |
 
 ## 快速开始
 
@@ -43,7 +53,7 @@ Telegram Bot ←→ Google Gemini 2.5 Flash ←→ Obsidian Vault
 - 一台一直在线的 Mac（或 Linux）
 - Python 3.9+
 - Telegram 账号
-- Google AI API Key（免费）
+- AI API Key（任选一个）
 
 ### 2. 获取 API Keys
 
@@ -52,9 +62,15 @@ Telegram Bot ←→ Google Gemini 2.5 Flash ←→ Obsidian Vault
 2. 发送 `/newbot`
 3. 按提示创建，获取 Token
 
-**Google AI API Key:**
-1. 访问 https://aistudio.google.com/apikey
-2. 创建 API Key（免费）
+**AI API Key（任选一个）:**
+
+| 提供商 | 获取地址 | 说明 |
+|--------|----------|------|
+| Gemini | https://aistudio.google.com/apikey | 免费，推荐 |
+| OpenAI | https://platform.openai.com/api-keys | 付费 |
+| Claude | https://console.anthropic.com/ | 付费 |
+| Grok | https://console.x.ai/ | 付费 |
+| Local | 无需 Key | 需本地运行 Ollama |
 
 ### 3. 安装
 
@@ -81,11 +97,27 @@ cp .env.example .env
 ```
 
 **.env 文件内容：**
-```
+```bash
+# 必填
 TELEGRAM_BOT_TOKEN=你的Telegram Bot Token
-GOOGLE_AI_API_KEY=你的Google AI Key
 OBSIDIAN_VAULT_PATH=/Users/你的用户名/Documents/Obsidian/你的Vault名
-ALLOWED_USER_IDS=你的Telegram用户ID（可选，配置后启用每日提醒）
+
+# AI 配置（默认使用 Gemini）
+AI_PROVIDER=gemini          # 可选: gemini, openai, claude, grok, local
+AI_MODEL=                   # 可选，留空使用默认模型
+
+# 根据 AI_PROVIDER 填写对应的 Key
+GOOGLE_AI_API_KEY=          # gemini
+OPENAI_API_KEY=             # openai
+ANTHROPIC_API_KEY=          # claude
+XAI_API_KEY=                # grok
+
+# 本地模型配置（AI_PROVIDER=local 时使用）
+LOCAL_API_BASE=http://localhost:11434/v1
+LOCAL_API_KEY=not-needed
+
+# 可选
+ALLOWED_USER_IDS=你的Telegram用户ID（配置后启用每日提醒）
 ```
 
 > 💡 不知道你的 Telegram ID？启动 Bot 后发送 `/myid` 即可获取
@@ -212,7 +244,7 @@ models: [[奥卡姆剃刀]], [[第一性原理]]
 ```
 .
 ├── bot.py              # Telegram Bot 主程序
-├── ai.py               # AI 分析模块（Gemini）
+├── ai.py               # AI 分析模块（多后端支持）
 ├── vault.py            # Obsidian Vault 读写
 ├── vault_templates/    # 思维模型模板
 ├── requirements.txt    # Python 依赖
@@ -225,7 +257,7 @@ models: [[奥卡姆剃刀]], [[第一性原理]]
 - API Keys 存储在 `.env` 文件，已加入 `.gitignore`
 - 可通过 `ALLOWED_USER_IDS` 限制只有你能使用 Bot
 - 所有数据存储在本地 Obsidian vault
-- 灵感内容会发送到 Google Gemini API 进行分析
+- 灵感内容会发送到所选 AI 服务进行分析（使用本地模型可完全离线）
 
 ## License
 
