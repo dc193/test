@@ -11,162 +11,128 @@ const languageSelect = document.getElementById('language');
 const statusDiv = document.querySelector('.status');
 
 // State
-let recognition = null;
 let isRecording = false;
-let timerInterval = null;
-let startTime = null;
-let fullTranscript = '';
+let pollInterval = null;
 
-// Check if Web Speech API is supported
-if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
-  statusText.textContent = '您的浏览器不支持语音识别';
-  startBtn.disabled = true;
+// Send message to content script via background
+async function sendToContent(message) {
+  return new Promise((resolve) => {
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+      if (tabs[0]) {
+        chrome.tabs.sendMessage(tabs[0].id, message, (response) => {
+          resolve(response);
+        });
+      } else {
+        resolve({ error: 'No active tab' });
+      }
+    });
+  });
 }
 
-// Initialize Speech Recognition
-function initRecognition() {
-  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-  recognition = new SpeechRecognition();
+// Initialize - get state from content script
+async function initialize() {
+  const response = await sendToContent({ action: 'getState' });
+  if (response) {
+    isRecording = response.isRecording || false;
+    transcript.value = response.fullTranscript || '';
 
-  recognition.continuous = true;
-  recognition.interimResults = true;
-  recognition.lang = languageSelect.value;
+    if (response.currentLanguage) {
+      languageSelect.value = response.currentLanguage;
+    }
 
-  recognition.onstart = () => {
-    isRecording = true;
+    updateUI();
+  }
+
+  // Start polling for updates if recording
+  if (isRecording) {
+    startPolling();
+  }
+}
+
+// Update UI based on state
+function updateUI() {
+  startBtn.disabled = isRecording;
+  stopBtn.disabled = !isRecording;
+
+  if (isRecording) {
     statusText.textContent = '正在录制...';
     statusDiv.classList.add('recording');
-    startBtn.disabled = true;
-    stopBtn.disabled = false;
-    startTimer();
-  };
+  } else {
+    statusText.textContent = '准备就绪';
+    statusDiv.classList.remove('recording');
+  }
 
-  recognition.onresult = (event) => {
-    let interimTranscript = '';
-    let finalTranscript = '';
-
-    for (let i = event.resultIndex; i < event.results.length; i++) {
-      const transcript = event.results[i][0].transcript;
-      if (event.results[i].isFinal) {
-        finalTranscript += transcript + '\n';
-      } else {
-        interimTranscript += transcript;
-      }
-    }
-
-    if (finalTranscript) {
-      fullTranscript += finalTranscript;
-    }
-
-    // Display both final and interim results
-    document.getElementById('transcript').value = fullTranscript + interimTranscript;
-    updateButtonStates();
-  };
-
-  recognition.onerror = (event) => {
-    console.error('Speech recognition error:', event.error);
-    let errorMessage = '识别错误';
-
-    switch (event.error) {
-      case 'no-speech':
-        errorMessage = '未检测到语音';
-        break;
-      case 'audio-capture':
-        errorMessage = '未找到麦克风';
-        break;
-      case 'not-allowed':
-        errorMessage = '麦克风权限被拒绝';
-        break;
-      case 'network':
-        errorMessage = '网络错误';
-        break;
-    }
-
-    statusText.textContent = errorMessage;
-
-    // Auto-restart on recoverable errors
-    if (isRecording && event.error === 'no-speech') {
-      setTimeout(() => {
-        if (isRecording) {
-          try {
-            recognition.start();
-          } catch (e) {
-            console.log('Restart failed:', e);
-          }
-        }
-      }, 100);
-    }
-  };
-
-  recognition.onend = () => {
-    // Auto-restart if still recording
-    if (isRecording) {
-      try {
-        recognition.start();
-      } catch (e) {
-        console.log('Auto-restart failed:', e);
-        stopRecording();
-      }
-    }
-  };
+  const hasContent = transcript.value.trim().length > 0;
+  copyBtn.disabled = !hasContent;
+  saveBtn.disabled = !hasContent;
 }
 
-// Start Recording
-function startRecording() {
-  initRecognition();
-  try {
-    recognition.start();
-  } catch (e) {
-    console.error('Start failed:', e);
-    statusText.textContent = '启动失败，请重试';
+// Poll for transcript updates
+function startPolling() {
+  pollInterval = setInterval(async () => {
+    const response = await sendToContent({ action: 'getState' });
+    if (response) {
+      transcript.value = response.fullTranscript || '';
+      isRecording = response.isRecording || false;
+      updateUI();
+
+      if (!isRecording) {
+        stopPolling();
+      }
+    }
+  }, 500);
+}
+
+function stopPolling() {
+  if (pollInterval) {
+    clearInterval(pollInterval);
+    pollInterval = null;
+  }
+}
+
+// Start Recording - opens floating panel and starts
+async function startRecording() {
+  const language = languageSelect.value;
+
+  // First set the language
+  await sendToContent({ action: 'setLanguage', language });
+
+  // Then start recording (this also shows the panel)
+  const response = await sendToContent({ action: 'startRecording' });
+
+  if (response && response.success) {
+    isRecording = true;
+    updateUI();
+    startPolling();
+    statusText.textContent = '录制中（可关闭此窗口）';
+  } else {
+    statusText.textContent = '启动失败，请刷新页面重试';
   }
 }
 
 // Stop Recording
-function stopRecording() {
-  isRecording = false;
-  if (recognition) {
-    recognition.stop();
+async function stopRecording() {
+  const response = await sendToContent({ action: 'stopRecording' });
+
+  if (response) {
+    isRecording = false;
+    stopPolling();
+
+    // Get final transcript
+    const state = await sendToContent({ action: 'getState' });
+    if (state) {
+      transcript.value = state.fullTranscript || '';
+    }
+
+    updateUI();
+    statusText.textContent = '录制已停止';
   }
-  stopTimer();
-  statusDiv.classList.remove('recording');
-  statusText.textContent = '录制已停止';
-  startBtn.disabled = false;
-  stopBtn.disabled = true;
-  updateButtonStates();
-}
-
-// Timer functions
-function startTimer() {
-  startTime = Date.now();
-  timerInterval = setInterval(updateTimer, 1000);
-}
-
-function stopTimer() {
-  if (timerInterval) {
-    clearInterval(timerInterval);
-    timerInterval = null;
-  }
-}
-
-function updateTimer() {
-  const elapsed = Date.now() - startTime;
-  const minutes = Math.floor(elapsed / 60000);
-  const seconds = Math.floor((elapsed % 60000) / 1000);
-  timer.textContent = `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
-}
-
-// Update button states
-function updateButtonStates() {
-  const hasContent = fullTranscript.trim().length > 0;
-  copyBtn.disabled = !hasContent;
-  saveBtn.disabled = !hasContent;
 }
 
 // Copy to clipboard
 async function copyToClipboard() {
   try {
-    await navigator.clipboard.writeText(fullTranscript);
+    await navigator.clipboard.writeText(transcript.value);
     const originalText = copyBtn.textContent;
     copyBtn.textContent = '已复制!';
     setTimeout(() => {
@@ -180,42 +146,41 @@ async function copyToClipboard() {
 
 // Save to file
 function saveToFile() {
+  const text = transcript.value;
+  if (!text.trim()) return;
+
   const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
   const filename = `transcript_${timestamp}.txt`;
 
-  const blob = new Blob([fullTranscript], { type: 'text/plain;charset=utf-8' });
+  const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
   const url = URL.createObjectURL(blob);
 
-  // Use Chrome downloads API if available
-  if (chrome && chrome.downloads) {
-    chrome.downloads.download({
-      url: url,
-      filename: filename,
-      saveAs: true
-    }, () => {
-      URL.revokeObjectURL(url);
-      statusText.textContent = '文件已保存';
-    });
-  } else {
-    // Fallback for popup context
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
+  // Use Chrome downloads API
+  chrome.downloads.download({
+    url: url,
+    filename: filename,
+    saveAs: true
+  }, () => {
     URL.revokeObjectURL(url);
     statusText.textContent = '文件已保存';
-  }
+  });
 }
 
 // Clear transcript
-function clearTranscript() {
-  fullTranscript = '';
+async function clearTranscript() {
+  await sendToContent({ action: 'setLanguage', language: languageSelect.value });
+
+  // Clear in content script
+  const response = await sendToContent({ action: 'getState' });
+
+  // Also clear locally
   transcript.value = '';
   timer.textContent = '00:00';
   statusText.textContent = '准备就绪';
-  updateButtonStates();
+  updateUI();
+
+  // Send clear command
+  chrome.storage.local.set({ vstState: { fullTranscript: '', isRecording: false } });
 }
 
 // Event Listeners
@@ -225,11 +190,14 @@ copyBtn.addEventListener('click', copyToClipboard);
 saveBtn.addEventListener('click', saveToFile);
 clearBtn.addEventListener('click', clearTranscript);
 
-languageSelect.addEventListener('change', () => {
-  if (recognition) {
-    recognition.lang = languageSelect.value;
-  }
+languageSelect.addEventListener('change', async () => {
+  await sendToContent({ action: 'setLanguage', language: languageSelect.value });
 });
 
-// Initialize
-updateButtonStates();
+// Initialize on load
+document.addEventListener('DOMContentLoaded', initialize);
+
+// Cleanup on popup close
+window.addEventListener('unload', () => {
+  stopPolling();
+});

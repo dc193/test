@@ -1,12 +1,17 @@
 {
   "manifest_version": 3,
   "name": "Video Speech to Text",
-  "version": "1.0.0",
-  "description": "录制视频语音并转换为文字保存",
+  "version": "1.1.0",
+  "description": "录制视频语音并转换为文字保存（支持后台录制）",
   "permissions": [
     "activeTab",
     "tabCapture",
-    "downloads"
+    "downloads",
+    "storage",
+    "scripting"
+  ],
+  "host_permissions": [
+    "<all_urls>"
   ],
   "action": {
     "default_popup": "popup.html",
@@ -23,5 +28,18 @@
   },
   "background": {
     "service_worker": "background.js"
-  }
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "css": ["content.css"]
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["icons/*.png"],
+      "matches": ["<all_urls>"]
+    }
+  ]
 }
