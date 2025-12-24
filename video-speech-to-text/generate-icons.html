@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>生成图标</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      padding: 20px;
+      background: #f5f5f5;
+    }
+    .container {
+      max-width: 600px;
+      margin: 0 auto;
+      background: white;
+      padding: 20px;
+      border-radius: 8px;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+    }
+    h1 {
+      color: #333;
+    }
+    canvas {
+      border: 1px solid #ddd;
+      margin: 10px;
+    }
+    .icons {
+      display: flex;
+      gap: 20px;
+      flex-wrap: wrap;
+      margin: 20px 0;
+    }
+    .icon-item {
+      text-align: center;
+    }
+    .icon-item p {
+      margin: 5px 0;
+      font-size: 12px;
+      color: #666;
+    }
+    a {
+      display: inline-block;
+      margin: 5px;
+      padding: 8px 16px;
+      background: #667eea;
+      color: white;
+      text-decoration: none;
+      border-radius: 4px;
+    }
+    a:hover {
+      background: #5a6fd6;
+    }
+    .instructions {
+      background: #f9f9f9;
+      padding: 15px;
+      border-radius: 4px;
+      margin-top: 20px;
+    }
+    .instructions ol {
+      margin: 10px 0;
+      padding-left: 20px;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>图标生成器</h1>
+    <p>点击下面的链接下载图标，然后保存到 <code>icons</code> 文件夹中。</p>
+
+    <div class="icons">
+      <div class="icon-item">
+        <canvas id="icon16" width="16" height="16"></canvas>
+        <p>16x16</p>
+        <a id="download16" download="icon16.png">下载</a>
+      </div>
+      <div class="icon-item">
+        <canvas id="icon48" width="48" height="48"></canvas>
+        <p>48x48</p>
+        <a id="download48" download="icon48.png">下载</a>
+      </div>
+      <div class="icon-item">
+        <canvas id="icon128" width="128" height="128"></canvas>
+        <p>128x128</p>
+        <a id="download128" download="icon128.png">下载</a>
+      </div>
+    </div>
+
+    <div class="instructions">
+      <h3>使用说明：</h3>
+      <ol>
+        <li>点击每个图标下方的"下载"按钮</li>
+        <li>将下载的图标文件保存到插件的 <code>icons</code> 文件夹中</li>
+        <li>确保文件名为 <code>icon16.png</code>、<code>icon48.png</code>、<code>icon128.png</code></li>
+      </ol>
+    </div>
+  </div>
+
+  <script>
+    function drawIcon(canvas, size) {
+      const ctx = canvas.getContext('2d');
+      const center = size / 2;
+      const radius = size * 0.4;
+
+      // Background gradient
+      const gradient = ctx.createLinearGradient(0, 0, size, size);
+      gradient.addColorStop(0, '#667eea');
+      gradient.addColorStop(1, '#764ba2');
+
+      // Draw rounded rectangle background
+      ctx.fillStyle = gradient;
+      ctx.beginPath();
+      const r = size * 0.15;
+      ctx.moveTo(r, 0);
+      ctx.lineTo(size - r, 0);
+      ctx.quadraticCurveTo(size, 0, size, r);
+      ctx.lineTo(size, size - r);
+      ctx.quadraticCurveTo(size, size, size - r, size);
+      ctx.lineTo(r, size);
+      ctx.quadraticCurveTo(0, size, 0, size - r);
+      ctx.lineTo(0, r);
+      ctx.quadraticCurveTo(0, 0, r, 0);
+      ctx.fill();
+
+      // Draw microphone icon
+      ctx.fillStyle = 'white';
+      ctx.strokeStyle = 'white';
+      ctx.lineWidth = size * 0.06;
+
+      // Microphone body
+      const micWidth = size * 0.22;
+      const micHeight = size * 0.35;
+      const micX = center - micWidth / 2;
+      const micY = center - micHeight / 2 - size * 0.05;
+
+      ctx.beginPath();
+      ctx.roundRect(micX, micY, micWidth, micHeight, size * 0.08);
+      ctx.fill();
+
+      // Microphone stand arc
+      ctx.beginPath();
+      ctx.arc(center, micY + micHeight - size * 0.05, micWidth * 0.8, 0, Math.PI, false);
+      ctx.stroke();
+
+      // Microphone stand
+      ctx.beginPath();
+      ctx.moveTo(center, micY + micHeight + micWidth * 0.6);
+      ctx.lineTo(center, micY + micHeight + size * 0.18);
+      ctx.stroke();
+
+      // Base
+      ctx.beginPath();
+      ctx.moveTo(center - size * 0.12, micY + micHeight + size * 0.18);
+      ctx.lineTo(center + size * 0.12, micY + micHeight + size * 0.18);
+      ctx.stroke();
+    }
+
+    // Draw all icons
+    const sizes = [16, 48, 128];
+    sizes.forEach(size => {
+      const canvas = document.getElementById(`icon${size}`);
+      drawIcon(canvas, size);
+
+      // Set download link
+      const link = document.getElementById(`download${size}`);
+      link.href = canvas.toDataURL('image/png');
+    });
+  </script>
+</body>
+</html>
