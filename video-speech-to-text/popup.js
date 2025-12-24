@@ -11,129 +11,89 @@ const languageSelect = document.getElementById('language');
 const statusDiv = document.querySelector('.status');
 
 // State
-let recognition = null;
 let isRecording = false;
 let timerInterval = null;
 let startTime = null;
-let fullTranscript = '';
 
-// Check if Web Speech API is supported
-if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
-  statusText.textContent = '您的浏览器不支持语音识别';
-  startBtn.disabled = true;
+// Send message to background script
+function sendMessage(message) {
+  return new Promise((resolve) => {
+    chrome.runtime.sendMessage(message, (response) => {
+      resolve(response || {});
+    });
+  });
 }
 
-// Initialize Speech Recognition
-function initRecognition() {
-  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-  recognition = new SpeechRecognition();
-
-  recognition.continuous = true;
-  recognition.interimResults = true;
-  recognition.lang = languageSelect.value;
-
-  recognition.onstart = () => {
-    isRecording = true;
-    statusText.textContent = '正在录制...';
-    statusDiv.classList.add('recording');
-    startBtn.disabled = true;
-    stopBtn.disabled = false;
-    startTimer();
-  };
-
-  recognition.onresult = (event) => {
-    let interimTranscript = '';
-    let finalTranscript = '';
-
-    for (let i = event.resultIndex; i < event.results.length; i++) {
-      const transcript = event.results[i][0].transcript;
-      if (event.results[i].isFinal) {
-        finalTranscript += transcript + '\n';
-      } else {
-        interimTranscript += transcript;
-      }
-    }
-
-    if (finalTranscript) {
-      fullTranscript += finalTranscript;
-    }
-
-    // Display both final and interim results
-    document.getElementById('transcript').value = fullTranscript + interimTranscript;
+// Load saved state on popup open
+async function loadState() {
+  const state = await sendMessage({ action: 'getState' });
+  if (state.transcription) {
+    transcript.value = state.transcription;
     updateButtonStates();
-  };
+  }
+  if (state.isRecording) {
+    setRecordingUI(true);
+  }
+}
 
-  recognition.onerror = (event) => {
-    console.error('Speech recognition error:', event.error);
-    let errorMessage = '识别错误';
+// Update UI for recording state
+function setRecordingUI(recording) {
+  isRecording = recording;
+  startBtn.disabled = recording;
+  stopBtn.disabled = !recording;
+  languageSelect.disabled = recording;
 
-    switch (event.error) {
-      case 'no-speech':
-        errorMessage = '未检测到语音';
-        break;
-      case 'audio-capture':
-        errorMessage = '未找到麦克风';
-        break;
-      case 'not-allowed':
-        errorMessage = '麦克风权限被拒绝';
-        break;
-      case 'network':
-        errorMessage = '网络错误';
-        break;
+  if (recording) {
+    statusDiv.classList.add('recording');
+    statusText.textContent = '正在录制...';
+    if (!timerInterval) {
+      startTimer();
     }
-
-    statusText.textContent = errorMessage;
-
-    // Auto-restart on recoverable errors
-    if (isRecording && event.error === 'no-speech') {
-      setTimeout(() => {
-        if (isRecording) {
-          try {
-            recognition.start();
-          } catch (e) {
-            console.log('Restart failed:', e);
-          }
-        }
-      }, 100);
-    }
-  };
-
-  recognition.onend = () => {
-    // Auto-restart if still recording
-    if (isRecording) {
-      try {
-        recognition.start();
-      } catch (e) {
-        console.log('Auto-restart failed:', e);
-        stopRecording();
-      }
-    }
-  };
+  } else {
+    statusDiv.classList.remove('recording');
+    statusText.textContent = '准备就绪';
+    stopTimer();
+  }
 }
 
 // Start Recording
-function startRecording() {
-  initRecognition();
+async function startRecording() {
+  statusText.textContent = '初始化模型...';
+  startBtn.disabled = true;
+
   try {
-    recognition.start();
-  } catch (e) {
-    console.error('Start failed:', e);
-    statusText.textContent = '启动失败，请重试';
+    // First initialize the Whisper model
+    const initResult = await sendMessage({ action: 'initModel' });
+    if (!initResult.success) {
+      throw new Error(initResult.error || '模型初始化失败');
+    }
+
+    statusText.textContent = '开始录制...';
+
+    // Then start recording
+    const language = languageSelect.value;
+    const startResult = await sendMessage({ action: 'startRecording', language });
+    if (!startResult.success) {
+      throw new Error(startResult.error || '开始录制失败');
+    }
+
+    setRecordingUI(true);
+  } catch (error) {
+    console.error('Start recording error:', error);
+    statusText.textContent = '错误: ' + error.message;
+    startBtn.disabled = false;
   }
 }
 
 // Stop Recording
-function stopRecording() {
-  isRecording = false;
-  if (recognition) {
-    recognition.stop();
+async function stopRecording() {
+  try {
+    await sendMessage({ action: 'stopRecording' });
+    setRecordingUI(false);
+    statusText.textContent = '录制已停止';
+  } catch (error) {
+    console.error('Stop recording error:', error);
   }
-  stopTimer();
-  statusDiv.classList.remove('recording');
-  statusText.textContent = '录制已停止';
-  startBtn.disabled = false;
-  stopBtn.disabled = true;
-  updateButtonStates();
 }
 
 // Timer functions
@@ -158,7 +118,7 @@ function updateTimer() {
 
 // Update button states
 function updateButtonStates() {
-  const hasContent = fullTranscript.trim().length > 0;
+  const hasContent = transcript.value.trim().length > 0;
   copyBtn.disabled = !hasContent;
   saveBtn.disabled = !hasContent;
 }
@@ -166,7 +126,7 @@ function updateButtonStates() {
 // Copy to clipboard
 async function copyToClipboard() {
   try {
-    await navigator.clipboard.writeText(fullTranscript);
+    await navigator.clipboard.writeText(transcript.value);
     const originalText = copyBtn.textContent;
     copyBtn.textContent = '已复制!';
     setTimeout(() => {
@@ -183,10 +143,9 @@ function saveToFile() {
   const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
   const filename = `transcript_${timestamp}.txt`;
 
-  const blob = new Blob([fullTranscript], { type: 'text/plain;charset=utf-8' });
+  const blob = new Blob([transcript.value], { type: 'text/plain;charset=utf-8' });
   const url = URL.createObjectURL(blob);
 
-  // Use Chrome downloads API if available
   if (chrome && chrome.downloads) {
     chrome.downloads.download({
       url: url,
@@ -197,7 +156,6 @@ function saveToFile() {
       statusText.textContent = '文件已保存';
     });
   } else {
-    // Fallback for popup context
     const a = document.createElement('a');
     a.href = url;
     a.download = filename;
@@ -210,13 +168,47 @@ function saveToFile() {
 }
 
 // Clear transcript
-function clearTranscript() {
-  fullTranscript = '';
+async function clearTranscript() {
   transcript.value = '';
   timer.textContent = '00:00';
   statusText.textContent = '准备就绪';
+  await sendMessage({ action: 'clearTranscription' });
   updateButtonStates();
 }
+
+// Listen for updates from background
+chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+  switch (request.action) {
+    case 'captureStarted':
+      setRecordingUI(true);
+      break;
+    case 'captureStopped':
+      setRecordingUI(false);
+      break;
+    case 'transcriptionResult':
+      if (transcript.value) {
+        transcript.value += ' ' + request.text;
+      } else {
+        transcript.value = request.text;
+      }
+      transcript.scrollTop = transcript.scrollHeight;
+      updateButtonStates();
+      break;
+    case 'transcriptionError':
+      statusText.textContent = '错误: ' + request.error;
+      break;
+    case 'modelProgress':
+      if (request.progress) {
+        const progress = request.progress;
+        if (progress.status === 'progress' && progress.progress !== undefined) {
+          statusText.textContent = `加载模型: ${Math.round(progress.progress)}%`;
+        } else if (progress.status === 'done') {
+          statusText.textContent = '模型加载完成';
+        }
+      }
+      break;
+  }
+});
 
 // Event Listeners
 startBtn.addEventListener('click', startRecording);
@@ -225,11 +217,6 @@ copyBtn.addEventListener('click', copyToClipboard);
 saveBtn.addEventListener('click', saveToFile);
 clearBtn.addEventListener('click', clearTranscript);
 
-languageSelect.addEventListener('change', () => {
-  if (recognition) {
-    recognition.lang = languageSelect.value;
-  }
-});
-
 // Initialize
+loadState();
 updateButtonStates();

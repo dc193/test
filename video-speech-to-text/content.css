@@ -1,0 +1,296 @@
+/* Video Speech to Text - Floating Panel Styles */
+
+#video-speech-panel {
+  position: fixed;
+  top: 20px;
+  right: 20px;
+  width: 320px;
+  background: #ffffff;
+  border-radius: 12px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.15);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-size: 14px;
+  z-index: 2147483647;
+  overflow: hidden;
+  transition: all 0.3s ease;
+}
+
+#video-speech-panel.vst-minimized {
+  width: 200px;
+}
+
+#video-speech-panel.vst-minimized .vst-body {
+  display: none;
+}
+
+.vst-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 16px;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+  cursor: grab;
+  user-select: none;
+}
+
+.vst-title {
+  font-weight: 600;
+  font-size: 15px;
+}
+
+.vst-header-btns {
+  display: flex;
+  gap: 8px;
+}
+
+.vst-btn-mini {
+  width: 24px;
+  height: 24px;
+  border: none;
+  background: rgba(255, 255, 255, 0.2);
+  color: white;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.2s;
+}
+
+.vst-btn-mini:hover {
+  background: rgba(255, 255, 255, 0.3);
+}
+
+.vst-body {
+  padding: 16px;
+}
+
+.vst-status {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 12px;
+  background: #f7f8fa;
+  border-radius: 8px;
+  margin-bottom: 12px;
+}
+
+.vst-status-text {
+  color: #666;
+  font-size: 13px;
+}
+
+.vst-timer {
+  font-family: 'SF Mono', Monaco, monospace;
+  font-size: 14px;
+  color: #333;
+  font-weight: 500;
+}
+
+.vst-progress {
+  margin-bottom: 12px;
+}
+
+.vst-progress-bar {
+  height: 4px;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  border-radius: 2px;
+  width: 0%;
+  transition: width 0.3s ease;
+}
+
+.vst-progress-text {
+  display: block;
+  font-size: 12px;
+  color: #666;
+  margin-top: 4px;
+}
+
+.vst-language {
+  margin-bottom: 12px;
+}
+
+.vst-language label {
+  display: block;
+  font-size: 13px;
+  color: #666;
+  margin-bottom: 6px;
+}
+
+.vst-language-select {
+  width: 100%;
+  padding: 8px 12px;
+  border: 1px solid #e0e0e0;
+  border-radius: 6px;
+  font-size: 14px;
+  background: white;
+  cursor: pointer;
+}
+
+.vst-language-select:focus {
+  outline: none;
+  border-color: #667eea;
+}
+
+.vst-controls {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.vst-btn {
+  flex: 1;
+  padding: 10px 16px;
+  border: none;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.vst-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.vst-btn-primary {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+}
+
+.vst-btn-primary:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+}
+
+.vst-btn-danger {
+  background: linear-gradient(135deg, #f5576c 0%, #f093fb 100%);
+  color: white;
+}
+
+.vst-btn-danger:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(245, 87, 108, 0.4);
+}
+
+.vst-btn-secondary {
+  background: #f0f0f0;
+  color: #333;
+}
+
+.vst-btn-secondary:hover:not(:disabled) {
+  background: #e0e0e0;
+}
+
+.vst-transcript-container {
+  margin-bottom: 12px;
+}
+
+.vst-transcript-container label {
+  display: block;
+  font-size: 13px;
+  color: #666;
+  margin-bottom: 6px;
+}
+
+.vst-transcript {
+  width: 100%;
+  height: 120px;
+  padding: 10px 12px;
+  border: 1px solid #e0e0e0;
+  border-radius: 8px;
+  font-size: 13px;
+  line-height: 1.5;
+  resize: vertical;
+  font-family: inherit;
+  box-sizing: border-box;
+}
+
+.vst-transcript:focus {
+  outline: none;
+  border-color: #667eea;
+}
+
+.vst-transcript::placeholder {
+  color: #aaa;
+}
+
+.vst-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.vst-actions .vst-btn {
+  flex: 1;
+  padding: 8px 12px;
+  font-size: 13px;
+}
+
+/* Recording indicator animation */
+#video-speech-panel.vst-recording .vst-status {
+  background: #fff5f5;
+}
+
+#video-speech-panel.vst-recording .vst-status-text {
+  color: #e53e3e;
+}
+
+#video-speech-panel.vst-recording .vst-status-text::before {
+  content: '';
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  background: #e53e3e;
+  border-radius: 50%;
+  margin-right: 8px;
+  animation: vst-pulse 1s infinite;
+}
+
+@keyframes vst-pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
+
+/* Dark mode support */
+@media (prefers-color-scheme: dark) {
+  #video-speech-panel {
+    background: #1a1a2e;
+    color: #e0e0e0;
+  }
+
+  .vst-status {
+    background: #16213e;
+  }
+
+  .vst-status-text {
+    color: #a0a0a0;
+  }
+
+  .vst-timer {
+    color: #e0e0e0;
+  }
+
+  .vst-language-select,
+  .vst-transcript {
+    background: #16213e;
+    border-color: #2a2a4a;
+    color: #e0e0e0;
+  }
+
+  .vst-btn-secondary {
+    background: #2a2a4a;
+    color: #e0e0e0;
+  }
+
+  .vst-btn-secondary:hover:not(:disabled) {
+    background: #3a3a5a;
+  }
+}
