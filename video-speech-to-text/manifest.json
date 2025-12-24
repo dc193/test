@@ -1,14 +1,12 @@
 {
   "manifest_version": 3,
   "name": "Video Speech to Text",
-  "version": "1.1.0",
-  "description": "录制视频语音并转换为文字保存（支持后台录制）",
+  "version": "2.0.0",
+  "description": "捕获标签页音频并转换为文字（无需麦克风）",
   "permissions": [
     "activeTab",
-    "tabCapture",
     "downloads",
-    "storage",
-    "scripting"
+    "storage"
   ],
   "host_permissions": [
     "<all_urls>"
@@ -34,12 +32,6 @@
       "matches": ["<all_urls>"],
       "js": ["content.js"],
       "css": ["content.css"]
-    }
-  ],
-  "web_accessible_resources": [
-    {
-      "resources": ["icons/*.png"],
-      "matches": ["<all_urls>"]
     }
   ]
 }

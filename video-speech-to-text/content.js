@@ -1,12 +1,13 @@
-// Content Script - 在网页中运行语音识别
+// Content Script - 捕获标签页音频并转文字
 (function() {
   'use strict';
 
-  // 防止重复初始化
-  if (window.__videoSpeechToTextInitialized) return;
-  window.__videoSpeechToTextInitialized = true;
+  if (window.__vstInitialized) return;
+  window.__vstInitialized = true;
 
   // State
+  let mediaStream = null;
+  let audioContext = null;
   let recognition = null;
   let isRecording = false;
   let startTime = null;
@@ -15,7 +16,7 @@
   let currentLanguage = 'zh-CN';
   let floatingPanel = null;
 
-  // 创建悬浮控制面板
+  // 创建悬浮面板
   function createFloatingPanel() {
     if (floatingPanel) return;
 
@@ -48,18 +49,12 @@
     `;
 
     document.body.appendChild(floatingPanel);
-
-    // Make panel draggable
     makeDraggable(floatingPanel);
-
-    // Bind events
     bindPanelEvents();
-
-    // Load saved state
     loadState();
   }
 
-  // 使面板可拖动
+  // 拖动功能
   function makeDraggable(element) {
     const header = element.querySelector('.vst-header');
     let isDragging = false;
@@ -70,31 +65,19 @@
       isDragging = true;
       offsetX = e.clientX - element.offsetLeft;
       offsetY = e.clientY - element.offsetTop;
-      element.style.cursor = 'grabbing';
     });
 
     document.addEventListener('mousemove', (e) => {
       if (!isDragging) return;
-      let x = e.clientX - offsetX;
-      let y = e.clientY - offsetY;
-
-      // Keep within viewport
-      x = Math.max(0, Math.min(x, window.innerWidth - element.offsetWidth));
-      y = Math.max(0, Math.min(y, window.innerHeight - element.offsetHeight));
-
-      element.style.left = x + 'px';
-      element.style.top = y + 'px';
+      element.style.left = Math.max(0, e.clientX - offsetX) + 'px';
+      element.style.top = Math.max(0, e.clientY - offsetY) + 'px';
       element.style.right = 'auto';
-      element.style.bottom = 'auto';
     });
 
-    document.addEventListener('mouseup', () => {
-      isDragging = false;
-      element.style.cursor = '';
-    });
+    document.addEventListener('mouseup', () => isDragging = false);
   }
 
-  // 绑定面板事件
+  // 绑定事件
   function bindPanelEvents() {
     document.getElementById('vst-start').addEventListener('click', startRecording);
     document.getElementById('vst-stop').addEventListener('click', stopRecording);
@@ -105,12 +88,57 @@
     document.getElementById('vst-close').addEventListener('click', hidePanel);
   }
 
+  // 开始录制 - 使用 getDisplayMedia 捕获标签页音频
+  async function startRecording() {
+    try {
+      updateStatus('请选择要捕获的标签页...');
+
+      // 请求捕获标签页（包含音频）
+      mediaStream = await navigator.mediaDevices.getDisplayMedia({
+        video: { displaySurface: 'browser' },
+        audio: true,
+        preferCurrentTab: true
+      });
+
+      // 检查是否有音频轨道
+      const audioTracks = mediaStream.getAudioTracks();
+      if (audioTracks.length === 0) {
+        throw new Error('未捕获到音频，请确保勾选了"分享音频"');
+      }
+
+      // 停止视频轨道（我们只需要音频）
+      mediaStream.getVideoTracks().forEach(track => track.stop());
+
+      // 创建音频上下文并播放（用户可以听到）
+      audioContext = new AudioContext();
+      const source = audioContext.createMediaStreamSource(mediaStream);
+      source.connect(audioContext.destination);
+
+      // 初始化语音识别
+      initRecognition();
+      recognition.start();
+
+      // 监听流结束事件
+      mediaStream.getAudioTracks()[0].onended = () => {
+        if (isRecording) stopRecording();
+      };
+
+    } catch (error) {
+      console.error('Capture error:', error);
+      if (error.name === 'NotAllowedError') {
+        updateStatus('用户取消了选择');
+      } else {
+        updateStatus('错误: ' + error.message);
+      }
+    }
+  }
+
   // 初始化语音识别
   function initRecognition() {
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SpeechRecognition) {
       updateStatus('浏览器不支持语音识别');
-      return false;
+      return;
     }
 
     recognition = new SpeechRecognition();
@@ -133,11 +161,11 @@
       let finalTranscript = '';
 
       for (let i = event.resultIndex; i < event.results.length; i++) {
-        const transcript = event.results[i][0].transcript;
+        const text = event.results[i][0].transcript;
         if (event.results[i].isFinal) {
-          finalTranscript += transcript + '\n';
+          finalTranscript += text + '\n';
         } else {
-          interimTranscript += transcript;
+          interimTranscript += text;
         }
       }
 
@@ -151,72 +179,45 @@
     };
 
     recognition.onerror = (event) => {
-      console.error('Speech recognition error:', event.error);
-      let errorMessage = '识别错误';
-
-      switch (event.error) {
-        case 'no-speech':
-          errorMessage = '未检测到语音';
-          break;
-        case 'audio-capture':
-          errorMessage = '未找到麦克风';
-          break;
-        case 'not-allowed':
-          errorMessage = '麦克风权限被拒绝';
-          break;
-        case 'network':
-          errorMessage = '网络错误';
-          break;
-      }
-
-      updateStatus(errorMessage);
-
-      // Auto-restart on recoverable errors
-      if (isRecording && event.error === 'no-speech') {
-        setTimeout(() => {
-          if (isRecording) {
-            try {
-              recognition.start();
-            } catch (e) {
-              console.log('Restart failed:', e);
-            }
-          }
-        }, 100);
+      console.error('Recognition error:', event.error);
+      if (event.error === 'no-speech') {
+        updateStatus('未检测到语音...');
+        if (isRecording) {
+          setTimeout(() => {
+            if (isRecording) try { recognition.start(); } catch(e) {}
+          }, 100);
+        }
+      } else if (event.error === 'not-allowed') {
+        updateStatus('麦克风权限被拒绝');
       }
     };
 
     recognition.onend = () => {
       if (isRecording) {
-        try {
-          recognition.start();
-        } catch (e) {
-          console.log('Auto-restart failed:', e);
-          stopRecording();
-        }
+        try { recognition.start(); } catch(e) { stopRecording(); }
       }
     };
-
-    return true;
-  }
-
-  // 开始录制
-  function startRecording() {
-    if (!initRecognition()) return;
-
-    try {
-      recognition.start();
-    } catch (e) {
-      console.error('Start failed:', e);
-      updateStatus('启动失败，请重试');
-    }
   }
 
   // 停止录制
   function stopRecording() {
     isRecording = false;
+
     if (recognition) {
       recognition.stop();
+      recognition = null;
     }
+
+    if (mediaStream) {
+      mediaStream.getTracks().forEach(track => track.stop());
+      mediaStream = null;
+    }
+
+    if (audioContext) {
+      audioContext.close();
+      audioContext = null;
+    }
+
     stopTimer();
     floatingPanel.classList.remove('vst-recording');
     updateStatus('录制已停止');
@@ -229,7 +230,13 @@
   // 计时器
   function startTimer() {
     startTime = Date.now();
-    timerInterval = setInterval(updateTimer, 1000);
+    timerInterval = setInterval(() => {
+      const elapsed = Date.now() - startTime;
+      const min = Math.floor(elapsed / 60000);
+      const sec = Math.floor((elapsed % 60000) / 1000);
+      document.getElementById('vst-timer').textContent =
+        `${String(min).padStart(2, '0')}:${String(sec).padStart(2, '0')}`;
+    }, 1000);
   }
 
   function stopTimer() {
@@ -239,18 +246,10 @@
     }
   }
 
-  function updateTimer() {
-    const elapsed = Date.now() - startTime;
-    const minutes = Math.floor(elapsed / 60000);
-    const seconds = Math.floor((elapsed % 60000) / 1000);
-    document.getElementById('vst-timer').textContent =
-      `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
-  }
-
-  // UI 更新函数
+  // UI 辅助函数
   function updateStatus(text) {
-    const statusEl = document.getElementById('vst-status-text');
-    if (statusEl) statusEl.textContent = text;
+    const el = document.getElementById('vst-status-text');
+    if (el) el.textContent = text;
   }
 
   function updateButtonStates() {
@@ -259,40 +258,29 @@
     document.getElementById('vst-save').disabled = !hasContent;
   }
 
-  // 复制文本
   async function copyTranscript() {
     try {
       await navigator.clipboard.writeText(fullTranscript);
       const btn = document.getElementById('vst-copy');
-      const originalText = btn.textContent;
       btn.textContent = '已复制!';
-      setTimeout(() => { btn.textContent = originalText; }, 2000);
+      setTimeout(() => btn.textContent = '复制', 2000);
     } catch (err) {
-      console.error('Copy failed:', err);
       updateStatus('复制失败');
     }
   }
 
-  // 保存文件
   function saveTranscript() {
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-    const filename = `transcript_${timestamp}.txt`;
-
     const blob = new Blob([fullTranscript], { type: 'text/plain;charset=utf-8' });
     const url = URL.createObjectURL(blob);
-
     const a = document.createElement('a');
     a.href = url;
-    a.download = filename;
-    document.body.appendChild(a);
+    a.download = `transcript_${timestamp}.txt`;
     a.click();
-    document.body.removeChild(a);
     URL.revokeObjectURL(url);
-
     updateStatus('文件已保存');
   }
 
-  // 清空
   function clearTranscript() {
     fullTranscript = '';
     document.getElementById('vst-transcript').value = '';
@@ -302,39 +290,26 @@
     saveState();
   }
 
-  // 最小化/展开
   function toggleMinimize() {
     floatingPanel.classList.toggle('vst-minimized');
-    const btn = document.getElementById('vst-minimize');
-    btn.textContent = floatingPanel.classList.contains('vst-minimized') ? '+' : '−';
+    document.getElementById('vst-minimize').textContent =
+      floatingPanel.classList.contains('vst-minimized') ? '+' : '−';
   }
 
-  // 显示/隐藏面板
   function showPanel() {
-    if (!floatingPanel) {
-      createFloatingPanel();
-    }
+    if (!floatingPanel) createFloatingPanel();
     floatingPanel.style.display = 'block';
   }
 
   function hidePanel() {
-    if (isRecording) {
-      if (!confirm('正在录制中，确定要关闭吗？')) return;
-      stopRecording();
-    }
-    if (floatingPanel) {
-      floatingPanel.style.display = 'none';
-    }
+    if (isRecording && !confirm('正在录制中，确定要关闭吗？')) return;
+    if (isRecording) stopRecording();
+    if (floatingPanel) floatingPanel.style.display = 'none';
   }
 
-  // 保存/加载状态
+  // 状态持久化
   function saveState() {
-    const state = {
-      isRecording,
-      fullTranscript,
-      currentLanguage
-    };
-    chrome.storage.local.set({ vstState: state });
+    chrome.storage.local.set({ vstState: { fullTranscript, currentLanguage, isRecording } });
   }
 
   function loadState() {
@@ -348,51 +323,22 @@
     });
   }
 
-  // 设置语言
   function setLanguage(lang) {
     currentLanguage = lang;
-    if (recognition) {
-      recognition.lang = lang;
-    }
+    if (recognition) recognition.lang = lang;
     saveState();
   }
 
-  // 监听来自 popup 或 background 的消息
+  // 消息监听
   chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     switch (request.action) {
-      case 'showPanel':
-        showPanel();
-        sendResponse({ success: true });
-        break;
-      case 'hidePanel':
-        hidePanel();
-        sendResponse({ success: true });
-        break;
-      case 'startRecording':
-        showPanel();
-        if (!isRecording) startRecording();
-        sendResponse({ success: true });
-        break;
-      case 'stopRecording':
-        stopRecording();
-        sendResponse({ success: true });
-        break;
-      case 'getState':
-        sendResponse({
-          isRecording,
-          fullTranscript,
-          currentLanguage
-        });
-        break;
-      case 'setLanguage':
-        setLanguage(request.language);
-        sendResponse({ success: true });
-        break;
-      case 'getTranscript':
-        sendResponse({ transcript: fullTranscript });
-        break;
+      case 'showPanel': showPanel(); break;
+      case 'startRecording': showPanel(); if (!isRecording) startRecording(); break;
+      case 'stopRecording': stopRecording(); break;
+      case 'getState': sendResponse({ isRecording, fullTranscript, currentLanguage }); break;
+      case 'setLanguage': setLanguage(request.language); break;
     }
+    sendResponse({ success: true });
     return true;
   });
-
 })();
