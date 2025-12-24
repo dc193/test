@@ -9,7 +9,6 @@
 <body>
   <div class="container">
     <h1>视频语音转文字</h1>
-    <p class="subtitle">捕获标签页音频转文字</p>
 
     <div class="language-select">
       <label for="language">识别语言：</label>
@@ -24,12 +23,18 @@
     </div>
 
     <div class="controls">
-      <button id="startBtn" class="btn btn-primary">开始录制</button>
-      <button id="stopBtn" class="btn btn-danger" disabled>停止录制</button>
+      <button id="startBtn" class="btn btn-primary">
+        <span class="icon">🎙️</span>
+        开始录制
+      </button>
+      <button id="stopBtn" class="btn btn-danger" disabled>
+        <span class="icon">⏹️</span>
+        停止录制
+      </button>
     </div>
 
     <div class="status">
-      <span id="statusText">点击开始后选择要捕获的标签页</span>
+      <span id="statusText">准备就绪</span>
       <span id="timer" class="timer">00:00</span>
     </div>
 
@@ -39,13 +44,15 @@
     </div>
 
     <div class="actions">
-      <button id="copyBtn" class="btn btn-secondary" disabled>复制</button>
-      <button id="saveBtn" class="btn btn-secondary" disabled>保存</button>
-      <button id="clearBtn" class="btn btn-secondary">清空</button>
-    </div>
-
-    <div class="note">
-      <small>提示：开始后会弹出选择窗口，请选择标签页并勾选"分享音频"</small>
+      <button id="copyBtn" class="btn btn-secondary" disabled>
+        复制文本
+      </button>
+      <button id="saveBtn" class="btn btn-secondary" disabled>
+        保存文件
+      </button>
+      <button id="clearBtn" class="btn btn-secondary">
+        清空
+      </button>
     </div>
   </div>
 
