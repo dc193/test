@@ -14,14 +14,60 @@ const statusDiv = document.querySelector('.status');
 let isRecording = false;
 let timerInterval = null;
 let startTime = null;
+let pollInterval = null;
+let lastTranscription = '';
 
 // Send message to background script
 function sendMessage(message) {
   return new Promise((resolve) => {
     chrome.runtime.sendMessage(message, (response) => {
-      resolve(response || {});
+      if (chrome.runtime.lastError) {
+        console.error('Message error:', chrome.runtime.lastError);
+        resolve({ success: false, error: chrome.runtime.lastError.message });
+      } else {
+        resolve(response || {});
+      }
     });
   });
+}
+
+// Poll for state updates
+function startPolling() {
+  if (pollInterval) return;
+
+  pollInterval = setInterval(async () => {
+    const state = await sendMessage({ action: 'getState' });
+
+    // Update transcription if changed
+    if (state.transcription && state.transcription !== lastTranscription) {
+      lastTranscription = state.transcription;
+      transcript.value = state.transcription;
+      transcript.scrollTop = transcript.scrollHeight;
+      updateButtonStates();
+    }
+
+    // Update recording state
+    if (state.isRecording !== isRecording) {
+      setRecordingUI(state.isRecording);
+    }
+
+    // Update progress
+    if (state.modelProgress) {
+      const progress = state.modelProgress;
+      if (progress.status === 'progress' && progress.progress !== undefined) {
+        statusText.textContent = `加载模型: ${Math.round(progress.progress)}%`;
+      } else if (progress.status === 'done') {
+        statusText.textContent = '模型已加载';
+      }
+    }
+  }, 500);
+}
+
+function stopPolling() {
+  if (pollInterval) {
+    clearInterval(pollInterval);
+    pollInterval = null;
+  }
 }
 
 // Load saved state on popup open
@@ -29,11 +75,15 @@ async function loadState() {
   const state = await sendMessage({ action: 'getState' });
   if (state.transcription) {
     transcript.value = state.transcription;
+    lastTranscription = state.transcription;
     updateButtonStates();
   }
   if (state.isRecording) {
     setRecordingUI(true);
   }
+
+  // Start polling for updates
+  startPolling();
 }
 
 // Update UI for recording state
@@ -51,18 +101,21 @@ function setRecordingUI(recording) {
     }
   } else {
     statusDiv.classList.remove('recording');
-    statusText.textContent = '准备就绪';
+    if (statusText.textContent === '正在录制...') {
+      statusText.textContent = '准备就绪';
+    }
     stopTimer();
   }
 }
 
 // Start Recording
 async function startRecording() {
-  statusText.textContent = '初始化模型...';
+  statusText.textContent = '初始化中...';
   startBtn.disabled = true;
 
   try {
     // First initialize the Whisper model
+    statusText.textContent = '加载 AI 模型...';
     const initResult = await sendMessage({ action: 'initModel' });
     if (!initResult.success) {
       throw new Error(initResult.error || '模型初始化失败');
@@ -170,45 +223,12 @@ function saveToFile() {
 // Clear transcript
 async function clearTranscript() {
   transcript.value = '';
+  lastTranscription = '';
   timer.textContent = '00:00';
   statusText.textContent = '准备就绪';
   await sendMessage({ action: 'clearTranscription' });
   updateButtonStates();
 }
-
-// Listen for updates from background
-chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-  switch (request.action) {
-    case 'captureStarted':
-      setRecordingUI(true);
-      break;
-    case 'captureStopped':
-      setRecordingUI(false);
-      break;
-    case 'transcriptionResult':
-      if (transcript.value) {
-        transcript.value += ' ' + request.text;
-      } else {
-        transcript.value = request.text;
-      }
-      transcript.scrollTop = transcript.scrollHeight;
-      updateButtonStates();
-      break;
-    case 'transcriptionError':
-      statusText.textContent = '错误: ' + request.error;
-      break;
-    case 'modelProgress':
-      if (request.progress) {
-        const progress = request.progress;
-        if (progress.status === 'progress' && progress.progress !== undefined) {
-          statusText.textContent = `加载模型: ${Math.round(progress.progress)}%`;
-        } else if (progress.status === 'done') {
-          statusText.textContent = '模型加载完成';
-        }
-      }
-      break;
-  }
-});
 
 // Event Listeners
 startBtn.addEventListener('click', startRecording);
@@ -216,6 +236,11 @@ stopBtn.addEventListener('click', stopRecording);
 copyBtn.addEventListener('click', copyToClipboard);
 saveBtn.addEventListener('click', saveToFile);
 clearBtn.addEventListener('click', clearTranscript);
+
+// Cleanup on popup close
+window.addEventListener('unload', () => {
+  stopPolling();
+});
 
 // Initialize
 loadState();

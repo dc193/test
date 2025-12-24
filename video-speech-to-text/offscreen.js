@@ -1,9 +1,4 @@
 // Offscreen document for audio capture and Whisper transcription
-import { pipeline, env } from 'https://cdn.jsdelivr.net/npm/@xenova/transformers@2.17.1';
-
-// Configure transformers.js
-env.allowLocalModels = false;
-env.useBrowserCache = true;
 
 let transcriber = null;
 let mediaRecorder = null;
@@ -11,12 +6,21 @@ let audioChunks = [];
 let isRecording = false;
 let audioContext = null;
 let mediaStream = null;
+let currentLanguage = 'zh-CN';
 
 // Initialize Whisper model
 async function initWhisper(onProgress) {
   if (transcriber) return transcriber;
 
   console.log('Loading Whisper model...');
+
+  // Dynamic import of transformers.js
+  const { pipeline, env } = await import('https://cdn.jsdelivr.net/npm/@xenova/transformers@2.17.1');
+
+  // Configure transformers.js
+  env.allowLocalModels = false;
+  env.useBrowserCache = true;
+
   transcriber = await pipeline(
     'automatic-speech-recognition',
     'Xenova/whisper-small',
@@ -24,15 +28,18 @@ async function initWhisper(onProgress) {
       progress_callback: onProgress
     }
   );
+
   console.log('Whisper model loaded!');
   return transcriber;
 }
 
 // Process audio blob and transcribe
-async function transcribeAudio(audioBlob, language = 'chinese') {
+async function transcribeAudio(audioBlob, language) {
   if (!transcriber) {
     throw new Error('Whisper model not initialized');
   }
+
+  console.log('Transcribing audio blob, size:', audioBlob.size);
 
   // Convert blob to array buffer
   const arrayBuffer = await audioBlob.arrayBuffer();
@@ -66,12 +73,16 @@ async function transcribeAudio(audioBlob, language = 'chinese') {
 
   await tempContext.close();
 
+  console.log('Transcription result:', result.text);
   return result.text;
 }
 
 // Start capturing audio from tab
 async function startCapture(streamId, language) {
   try {
+    currentLanguage = language;
+    console.log('Starting capture with streamId:', streamId);
+
     // Get the media stream from tab capture
     mediaStream = await navigator.mediaDevices.getUserMedia({
       audio: {
@@ -83,8 +94,7 @@ async function startCapture(streamId, language) {
       video: false
     });
 
-    // Create audio context for processing
-    audioContext = new AudioContext({ sampleRate: 16000 });
+    console.log('Got media stream');
 
     // Set up MediaRecorder to capture audio in chunks
     mediaRecorder = new MediaRecorder(mediaStream, {
@@ -97,14 +107,16 @@ async function startCapture(streamId, language) {
     mediaRecorder.ondataavailable = (event) => {
       if (event.data.size > 0) {
         audioChunks.push(event.data);
+        console.log('Audio chunk received, size:', event.data.size);
       }
     };
 
     mediaRecorder.onstop = async () => {
+      console.log('MediaRecorder stopped, chunks:', audioChunks.length);
       if (audioChunks.length > 0) {
         const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
         try {
-          const text = await transcribeAudio(audioBlob, language);
+          const text = await transcribeAudio(audioBlob, currentLanguage);
           if (text && text.trim()) {
             chrome.runtime.sendMessage({
               action: 'transcriptionResult',
@@ -120,24 +132,27 @@ async function startCapture(streamId, language) {
         }
         audioChunks = [];
       }
+
+      // Restart if still recording
+      if (isRecording && mediaRecorder) {
+        mediaRecorder.start();
+      }
     };
 
-    // Start recording in chunks (every 5 seconds for near real-time)
+    // Start recording
     mediaRecorder.start();
+    console.log('MediaRecorder started');
 
-    // Set up interval to process audio chunks
-    const chunkInterval = setInterval(() => {
-      if (isRecording && mediaRecorder.state === 'recording') {
+    // Set up interval to process audio chunks every 5 seconds
+    const processInterval = setInterval(() => {
+      if (isRecording && mediaRecorder && mediaRecorder.state === 'recording') {
         mediaRecorder.stop();
-        mediaRecorder.start();
-      } else {
-        clearInterval(chunkInterval);
+      } else if (!isRecording) {
+        clearInterval(processInterval);
       }
     }, 5000);
 
-    chrome.runtime.sendMessage({
-      action: 'captureStarted'
-    });
+    chrome.runtime.sendMessage({ action: 'captureStarted' });
 
     return true;
   } catch (error) {
@@ -152,11 +167,13 @@ async function startCapture(streamId, language) {
 
 // Stop capturing
 function stopCapture() {
+  console.log('Stopping capture');
   isRecording = false;
 
   if (mediaRecorder && mediaRecorder.state !== 'inactive') {
     mediaRecorder.stop();
   }
+  mediaRecorder = null;
 
   if (mediaStream) {
     mediaStream.getTracks().forEach(track => track.stop());
@@ -168,13 +185,13 @@ function stopCapture() {
     audioContext = null;
   }
 
-  chrome.runtime.sendMessage({
-    action: 'captureStopped'
-  });
+  chrome.runtime.sendMessage({ action: 'captureStopped' });
 }
 
 // Listen for messages from background script
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+  console.log('Offscreen received:', request.action);
+
   if (request.action === 'initWhisper') {
     initWhisper((progress) => {
       chrome.runtime.sendMessage({
@@ -184,6 +201,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     }).then(() => {
       sendResponse({ success: true });
     }).catch((error) => {
+      console.error('Whisper init error:', error);
       sendResponse({ success: false, error: error.message });
     });
     return true;
@@ -208,4 +226,6 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   }
 });
 
-console.log('Offscreen document loaded');
+// Signal that offscreen document is ready
+console.log('Offscreen document loaded, signaling ready...');
+chrome.runtime.sendMessage({ action: 'offscreenReady' });

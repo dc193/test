@@ -1,19 +1,9 @@
 // Background service worker for Video Speech to Text extension
 
-let offscreenDocumentCreated = false;
+let offscreenReady = false;
 
 // Create offscreen document if it doesn't exist
 async function ensureOffscreenDocument() {
-  if (offscreenDocumentCreated) {
-    // Check if it's still alive
-    try {
-      const response = await chrome.runtime.sendMessage({ action: 'ping' });
-      if (response?.alive) return true;
-    } catch (e) {
-      offscreenDocumentCreated = false;
-    }
-  }
-
   try {
     // Check if document already exists
     const existingContexts = await chrome.runtime.getContexts({
@@ -21,7 +11,6 @@ async function ensureOffscreenDocument() {
     });
 
     if (existingContexts.length > 0) {
-      offscreenDocumentCreated = true;
       return true;
     }
 
@@ -32,8 +21,22 @@ async function ensureOffscreenDocument() {
       justification: 'Capture tab audio for speech recognition'
     });
 
-    offscreenDocumentCreated = true;
     console.log('Offscreen document created');
+
+    // Wait for offscreen to be ready
+    await new Promise((resolve) => {
+      const checkReady = () => {
+        if (offscreenReady) {
+          resolve();
+        } else {
+          setTimeout(checkReady, 100);
+        }
+      };
+      // Also set a timeout
+      setTimeout(resolve, 3000);
+      checkReady();
+    });
+
     return true;
   } catch (error) {
     console.error('Failed to create offscreen document:', error);
@@ -41,57 +44,15 @@ async function ensureOffscreenDocument() {
   }
 }
 
-// Initialize Whisper model in offscreen document
-async function initWhisperModel() {
-  await ensureOffscreenDocument();
+// Send message to offscreen document
+function sendToOffscreen(message) {
   return new Promise((resolve, reject) => {
-    chrome.runtime.sendMessage({ action: 'initWhisper' }, (response) => {
+    chrome.runtime.sendMessage(message, (response) => {
       if (chrome.runtime.lastError) {
         reject(new Error(chrome.runtime.lastError.message));
-      } else if (response?.success) {
-        resolve(true);
       } else {
-        reject(new Error(response?.error || 'Failed to initialize Whisper'));
+        resolve(response);
       }
-    });
-  });
-}
-
-// Start tab audio capture
-async function startTabCapture(tabId, language) {
-  await ensureOffscreenDocument();
-
-  return new Promise((resolve, reject) => {
-    // Get stream ID from tab capture
-    chrome.tabCapture.getMediaStreamId({ targetTabId: tabId }, (streamId) => {
-      if (chrome.runtime.lastError) {
-        reject(new Error(chrome.runtime.lastError.message));
-        return;
-      }
-
-      // Send stream ID to offscreen document to start capture
-      chrome.runtime.sendMessage({
-        action: 'startCapture',
-        streamId: streamId,
-        language: language
-      }, (response) => {
-        if (chrome.runtime.lastError) {
-          reject(new Error(chrome.runtime.lastError.message));
-        } else if (response?.success) {
-          resolve(true);
-        } else {
-          reject(new Error('Failed to start capture'));
-        }
-      });
-    });
-  });
-}
-
-// Stop tab audio capture
-async function stopTabCapture() {
-  return new Promise((resolve) => {
-    chrome.runtime.sendMessage({ action: 'stopCapture' }, (response) => {
-      resolve(response?.success || false);
     });
   });
 }
@@ -101,19 +62,20 @@ chrome.runtime.onInstalled.addListener(() => {
   console.log('Video Speech to Text extension installed');
 });
 
-// Handle messages from popup and content scripts
+// Handle messages
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-  // Forward transcription results to all tabs with content script
+  console.log('Background received:', request.action);
+
+  // Offscreen ready signal
+  if (request.action === 'offscreenReady') {
+    offscreenReady = true;
+    console.log('Offscreen is ready');
+    sendResponse({ success: true });
+    return false;
+  }
+
+  // Forward transcription results to popup
   if (request.action === 'transcriptionResult') {
-    chrome.tabs.query({}, (tabs) => {
-      tabs.forEach(tab => {
-        chrome.tabs.sendMessage(tab.id, {
-          action: 'transcriptionResult',
-          text: request.text
-        }).catch(() => {});
-      });
-    });
-    // Also store the transcription
     chrome.storage.local.get(['transcription'], (result) => {
       const current = result.transcription || '';
       const updated = current + (current ? ' ' : '') + request.text;
@@ -123,86 +85,97 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   }
 
   if (request.action === 'transcriptionError') {
-    chrome.tabs.query({}, (tabs) => {
-      tabs.forEach(tab => {
-        chrome.tabs.sendMessage(tab.id, {
-          action: 'transcriptionError',
-          error: request.error
-        }).catch(() => {});
-      });
-    });
+    console.error('Transcription error:', request.error);
     return false;
   }
 
   if (request.action === 'modelProgress') {
-    chrome.tabs.query({}, (tabs) => {
-      tabs.forEach(tab => {
-        chrome.tabs.sendMessage(tab.id, {
-          action: 'modelProgress',
-          progress: request.progress
-        }).catch(() => {});
-      });
-    });
+    // Store progress for popup to read
+    chrome.storage.local.set({ modelProgress: request.progress });
     return false;
   }
 
   if (request.action === 'captureStarted') {
     chrome.storage.local.set({ isRecording: true });
-    chrome.tabs.query({}, (tabs) => {
-      tabs.forEach(tab => {
-        chrome.tabs.sendMessage(tab.id, {
-          action: 'captureStarted'
-        }).catch(() => {});
-      });
-    });
     return false;
   }
 
   if (request.action === 'captureStopped') {
     chrome.storage.local.set({ isRecording: false });
-    chrome.tabs.query({}, (tabs) => {
-      tabs.forEach(tab => {
-        chrome.tabs.sendMessage(tab.id, {
-          action: 'captureStopped'
-        }).catch(() => {});
-      });
-    });
     return false;
   }
 
-  // Handle requests from popup/content scripts
+  // Handle requests from popup
   if (request.action === 'initModel') {
-    initWhisperModel()
-      .then(() => sendResponse({ success: true }))
-      .catch((error) => sendResponse({ success: false, error: error.message }));
+    (async () => {
+      try {
+        await ensureOffscreenDocument();
+        const response = await sendToOffscreen({ action: 'initWhisper' });
+        sendResponse(response || { success: true });
+      } catch (error) {
+        console.error('Init model error:', error);
+        sendResponse({ success: false, error: error.message });
+      }
+    })();
     return true;
   }
 
   if (request.action === 'startRecording') {
-    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-      if (tabs[0]) {
-        startTabCapture(tabs[0].id, request.language)
-          .then(() => sendResponse({ success: true }))
-          .catch((error) => sendResponse({ success: false, error: error.message }));
-      } else {
-        sendResponse({ success: false, error: 'No active tab' });
+    (async () => {
+      try {
+        await ensureOffscreenDocument();
+
+        // Get current active tab
+        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+        if (!tab) {
+          sendResponse({ success: false, error: 'No active tab' });
+          return;
+        }
+
+        // Get stream ID from tab capture
+        chrome.tabCapture.getMediaStreamId({ targetTabId: tab.id }, async (streamId) => {
+          if (chrome.runtime.lastError) {
+            sendResponse({ success: false, error: chrome.runtime.lastError.message });
+            return;
+          }
+
+          try {
+            const response = await sendToOffscreen({
+              action: 'startCapture',
+              streamId: streamId,
+              language: request.language
+            });
+            sendResponse(response || { success: true });
+          } catch (error) {
+            sendResponse({ success: false, error: error.message });
+          }
+        });
+      } catch (error) {
+        console.error('Start recording error:', error);
+        sendResponse({ success: false, error: error.message });
       }
-    });
+    })();
     return true;
   }
 
   if (request.action === 'stopRecording') {
-    stopTabCapture()
-      .then(() => sendResponse({ success: true }))
-      .catch((error) => sendResponse({ success: false, error: error.message }));
+    (async () => {
+      try {
+        const response = await sendToOffscreen({ action: 'stopCapture' });
+        sendResponse(response || { success: true });
+      } catch (error) {
+        sendResponse({ success: false, error: error.message });
+      }
+    })();
     return true;
   }
 
   if (request.action === 'getState') {
-    chrome.storage.local.get(['isRecording', 'transcription'], (result) => {
+    chrome.storage.local.get(['isRecording', 'transcription', 'modelProgress'], (result) => {
       sendResponse({
         isRecording: result.isRecording || false,
-        transcription: result.transcription || ''
+        transcription: result.transcription || '',
+        modelProgress: result.modelProgress || null
       });
     });
     return true;
@@ -211,15 +184,6 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.action === 'clearTranscription') {
     chrome.storage.local.set({ transcription: '' });
     sendResponse({ success: true });
-    return true;
-  }
-
-  if (request.action === 'getTabAudio') {
-    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-      if (tabs[0]) {
-        sendResponse({ tabId: tabs[0].id });
-      }
-    });
     return true;
   }
 });
