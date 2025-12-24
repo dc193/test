@@ -4,7 +4,7 @@
 使用方法：
 1. pip install flask flask-cors openai-whisper
 2. python server.py
-3. 打开浏览器访问 http://localhost:5000
+3. 打开浏览器访问 http://localhost:8000
 """
 
 import os
@@ -80,10 +80,10 @@ if __name__ == '__main__':
     print("视频语音转文字服务")
     print("=" * 50)
     print(f"模型: {model_name}")
-    print("访问: http://localhost:5000")
+    print("访问: http://localhost:8000")
     print("=" * 50)
 
     # 预加载模型
     get_model()
 
-    app.run(host='0.0.0.0', port=5000, debug=False)
+    app.run(host='0.0.0.0', port=8000, debug=False)
