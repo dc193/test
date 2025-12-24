@@ -1,0 +1,412 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>视频语音转文字</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      min-height: 100vh;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      padding: 20px;
+    }
+
+    .container {
+      background: white;
+      border-radius: 16px;
+      padding: 32px;
+      width: 100%;
+      max-width: 600px;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+    }
+
+    h1 {
+      text-align: center;
+      color: #333;
+      margin-bottom: 8px;
+    }
+
+    .subtitle {
+      text-align: center;
+      color: #666;
+      margin-bottom: 24px;
+      font-size: 14px;
+    }
+
+    .section {
+      margin-bottom: 20px;
+    }
+
+    label {
+      display: block;
+      margin-bottom: 8px;
+      color: #555;
+      font-weight: 500;
+    }
+
+    select {
+      width: 100%;
+      padding: 12px;
+      border: 2px solid #e0e0e0;
+      border-radius: 8px;
+      font-size: 16px;
+      background: white;
+    }
+
+    select:focus {
+      outline: none;
+      border-color: #667eea;
+    }
+
+    .controls {
+      display: flex;
+      gap: 12px;
+      margin-bottom: 20px;
+    }
+
+    .btn {
+      flex: 1;
+      padding: 14px 20px;
+      border: none;
+      border-radius: 8px;
+      font-size: 16px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .btn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    .btn-primary {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+    }
+
+    .btn-primary:hover:not(:disabled) {
+      transform: translateY(-2px);
+      box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+    }
+
+    .btn-danger {
+      background: linear-gradient(135deg, #f5576c 0%, #f093fb 100%);
+      color: white;
+    }
+
+    .btn-danger:hover:not(:disabled) {
+      transform: translateY(-2px);
+      box-shadow: 0 4px 12px rgba(245, 87, 108, 0.4);
+    }
+
+    .status {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 12px 16px;
+      background: #f7f8fa;
+      border-radius: 8px;
+      margin-bottom: 20px;
+    }
+
+    .status.recording {
+      background: #fff5f5;
+      animation: pulse 1.5s infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.7; }
+    }
+
+    .status-text {
+      color: #666;
+    }
+
+    .status.recording .status-text {
+      color: #e53e3e;
+    }
+
+    .timer {
+      font-family: 'SF Mono', Monaco, monospace;
+      font-weight: 600;
+    }
+
+    textarea {
+      width: 100%;
+      height: 200px;
+      padding: 16px;
+      border: 2px solid #e0e0e0;
+      border-radius: 8px;
+      font-size: 14px;
+      line-height: 1.6;
+      resize: vertical;
+      font-family: inherit;
+    }
+
+    textarea:focus {
+      outline: none;
+      border-color: #667eea;
+    }
+
+    .actions {
+      display: flex;
+      gap: 12px;
+      margin-top: 16px;
+    }
+
+    .btn-secondary {
+      background: #f0f0f0;
+      color: #333;
+    }
+
+    .btn-secondary:hover:not(:disabled) {
+      background: #e0e0e0;
+    }
+
+    .note {
+      margin-top: 24px;
+      padding: 16px;
+      background: #fffbeb;
+      border-radius: 8px;
+      font-size: 13px;
+      color: #92400e;
+    }
+
+    .note strong {
+      display: block;
+      margin-bottom: 8px;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>视频语音转文字</h1>
+    <p class="subtitle">捕获屏幕/标签页音频，使用本地 Whisper 转录</p>
+
+    <div class="section">
+      <label for="language">识别语言：</label>
+      <select id="language">
+        <option value="zh">中文</option>
+        <option value="en">English</option>
+        <option value="ja">日本語</option>
+        <option value="ko">한국어</option>
+      </select>
+    </div>
+
+    <div class="controls">
+      <button id="startBtn" class="btn btn-primary">开始录制</button>
+      <button id="stopBtn" class="btn btn-danger" disabled>停止录制</button>
+    </div>
+
+    <div class="status" id="status">
+      <span class="status-text" id="statusText">准备就绪</span>
+      <span class="timer" id="timer">00:00</span>
+    </div>
+
+    <div class="section">
+      <label>转录文本：</label>
+      <textarea id="transcript" placeholder="转录的文字将显示在这里..."></textarea>
+    </div>
+
+    <div class="actions">
+      <button id="copyBtn" class="btn btn-secondary" disabled>复制文本</button>
+      <button id="saveBtn" class="btn btn-secondary" disabled>保存文件</button>
+      <button id="clearBtn" class="btn btn-secondary">清空</button>
+    </div>
+
+    <div class="note">
+      <strong>使用说明：</strong>
+      1. 点击"开始录制"，选择要录制的标签页或整个屏幕<br>
+      2. 播放视频，音频会被实时捕获<br>
+      3. 点击"停止录制"，等待转录完成<br>
+      4. 转录结果会显示在文本框中
+    </div>
+  </div>
+
+  <script>
+    const startBtn = document.getElementById('startBtn');
+    const stopBtn = document.getElementById('stopBtn');
+    const statusText = document.getElementById('statusText');
+    const statusDiv = document.getElementById('status');
+    const timerEl = document.getElementById('timer');
+    const transcript = document.getElementById('transcript');
+    const copyBtn = document.getElementById('copyBtn');
+    const saveBtn = document.getElementById('saveBtn');
+    const clearBtn = document.getElementById('clearBtn');
+    const languageSelect = document.getElementById('language');
+
+    let mediaRecorder = null;
+    let audioChunks = [];
+    let timerInterval = null;
+    let startTime = null;
+
+    // 开始录制
+    startBtn.addEventListener('click', async () => {
+      try {
+        // 请求屏幕/标签页共享（包含音频）
+        const stream = await navigator.mediaDevices.getDisplayMedia({
+          video: true,
+          audio: {
+            echoCancellation: false,
+            noiseSuppression: false,
+            autoGainControl: false
+          }
+        });
+
+        // 只保留音频轨道
+        const audioTracks = stream.getAudioTracks();
+        if (audioTracks.length === 0) {
+          alert('请确保选择了"共享标签页音频"或"共享系统音频"选项');
+          stream.getTracks().forEach(t => t.stop());
+          return;
+        }
+
+        // 停止视频轨道（我们只需要音频）
+        stream.getVideoTracks().forEach(t => t.stop());
+
+        // 创建只有音频的流
+        const audioStream = new MediaStream(audioTracks);
+
+        // 设置录制器
+        mediaRecorder = new MediaRecorder(audioStream, {
+          mimeType: 'audio/webm;codecs=opus'
+        });
+
+        audioChunks = [];
+
+        mediaRecorder.ondataavailable = (e) => {
+          if (e.data.size > 0) {
+            audioChunks.push(e.data);
+          }
+        };
+
+        mediaRecorder.onstop = async () => {
+          statusText.textContent = '正在转录...';
+
+          const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+
+          // 发送到服务器转录
+          const formData = new FormData();
+          formData.append('audio', audioBlob, 'audio.webm');
+          formData.append('language', languageSelect.value);
+
+          try {
+            const response = await fetch('/transcribe', {
+              method: 'POST',
+              body: formData
+            });
+
+            const result = await response.json();
+
+            if (result.success) {
+              if (transcript.value) {
+                transcript.value += '\n' + result.text;
+              } else {
+                transcript.value = result.text;
+              }
+              updateButtons();
+              statusText.textContent = '转录完成';
+            } else {
+              statusText.textContent = '转录失败: ' + result.error;
+            }
+          } catch (error) {
+            statusText.textContent = '请求失败: ' + error.message;
+          }
+        };
+
+        // 开始录制
+        mediaRecorder.start();
+        startTime = Date.now();
+        startBtn.disabled = true;
+        stopBtn.disabled = false;
+        statusDiv.classList.add('recording');
+        statusText.textContent = '正在录制...';
+
+        // 启动计时器
+        timerInterval = setInterval(updateTimer, 1000);
+
+        // 当共享停止时自动停止录制
+        audioTracks[0].onended = () => {
+          if (mediaRecorder && mediaRecorder.state === 'recording') {
+            stopRecording();
+          }
+        };
+
+      } catch (error) {
+        console.error('Error:', error);
+        statusText.textContent = '错误: ' + error.message;
+      }
+    });
+
+    // 停止录制
+    stopBtn.addEventListener('click', stopRecording);
+
+    function stopRecording() {
+      if (mediaRecorder && mediaRecorder.state === 'recording') {
+        mediaRecorder.stop();
+      }
+
+      clearInterval(timerInterval);
+      startBtn.disabled = false;
+      stopBtn.disabled = true;
+      statusDiv.classList.remove('recording');
+    }
+
+    // 更新计时器
+    function updateTimer() {
+      const elapsed = Math.floor((Date.now() - startTime) / 1000);
+      const minutes = Math.floor(elapsed / 60).toString().padStart(2, '0');
+      const seconds = (elapsed % 60).toString().padStart(2, '0');
+      timerEl.textContent = `${minutes}:${seconds}`;
+    }
+
+    // 更新按钮状态
+    function updateButtons() {
+      const hasText = transcript.value.trim().length > 0;
+      copyBtn.disabled = !hasText;
+      saveBtn.disabled = !hasText;
+    }
+
+    // 复制
+    copyBtn.addEventListener('click', async () => {
+      await navigator.clipboard.writeText(transcript.value);
+      copyBtn.textContent = '已复制!';
+      setTimeout(() => { copyBtn.textContent = '复制文本'; }, 2000);
+    });
+
+    // 保存
+    saveBtn.addEventListener('click', () => {
+      const blob = new Blob([transcript.value], { type: 'text/plain;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `transcript_${new Date().toISOString().slice(0,19).replace(/[:-]/g, '')}.txt`;
+      a.click();
+      URL.revokeObjectURL(url);
+    });
+
+    // 清空
+    clearBtn.addEventListener('click', () => {
+      transcript.value = '';
+      timerEl.textContent = '00:00';
+      statusText.textContent = '准备就绪';
+      updateButtons();
+    });
+
+    // 初始化
+    updateButtons();
+  </script>
+</body>
+</html>
