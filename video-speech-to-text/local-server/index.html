@@ -537,11 +537,36 @@
       uploadBtn.disabled = false;
     });
 
+    // ===== 进度轮询 =====
+    let progressInterval = null;
+
+    function startProgressPolling(statusEl) {
+      progressInterval = setInterval(async () => {
+        try {
+          const res = await fetch('/progress');
+          const data = await res.json();
+          if (data.message) {
+            statusEl.textContent = data.message;
+          }
+        } catch (e) {}
+      }, 1000);
+    }
+
+    function stopProgressPolling() {
+      if (progressInterval) {
+        clearInterval(progressInterval);
+        progressInterval = null;
+      }
+    }
+
     // ===== 通用转录函数 =====
     async function transcribeBlob(blob, filename, statusEl) {
       const formData = new FormData();
       formData.append('file', blob, filename);
       formData.append('language', languageSelect.value);
+
+      // 开始轮询进度
+      startProgressPolling(statusEl);
 
       try {
         const response = await fetch('/transcribe', {
@@ -564,6 +589,8 @@
         }
       } catch (error) {
         statusEl.textContent = '请求失败: ' + error.message;
+      } finally {
+        stopProgressPolling();
       }
     }
 
