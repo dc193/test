@@ -1,127 +1,80 @@
 // Offscreen document for audio capture and Whisper transcription
+// Transformers.js is loaded via script tag in offscreen.html
 
-let sandboxFrame = null;
-let sandboxReady = false;
-let messageId = 0;
-let pendingMessages = new Map();
-
+let transcriber = null;
 let mediaRecorder = null;
 let audioChunks = [];
 let isRecording = false;
 let mediaStream = null;
 let currentLanguage = 'zh-CN';
 
-// Create sandbox iframe for Whisper
-function createSandbox() {
-  return new Promise((resolve) => {
-    if (sandboxFrame && sandboxReady) {
-      resolve();
-      return;
-    }
-
-    sandboxFrame = document.createElement('iframe');
-    sandboxFrame.src = chrome.runtime.getURL('sandbox.html');
-    sandboxFrame.style.display = 'none';
-    document.body.appendChild(sandboxFrame);
-
-    // Listen for messages from sandbox
-    window.addEventListener('message', handleSandboxMessage);
-
-    // Wait for ready signal
-    const checkReady = setInterval(() => {
-      if (sandboxReady) {
-        clearInterval(checkReady);
-        resolve();
-      }
-    }, 100);
-
-    // Timeout after 10 seconds
-    setTimeout(() => {
-      clearInterval(checkReady);
-      resolve();
-    }, 10000);
-  });
-}
-
-// Handle messages from sandbox
-function handleSandboxMessage(event) {
-  const { id, action, data } = event.data;
-
-  console.log('[Offscreen] Message from sandbox:', action);
-
-  if (action === 'ready') {
-    sandboxReady = true;
-    console.log('[Offscreen] Sandbox is ready');
-    return;
-  }
-
-  if (action === 'progress') {
-    chrome.runtime.sendMessage({
-      action: 'modelProgress',
-      progress: data
-    });
-    return;
-  }
-
-  // Handle response to pending message
-  const pending = pendingMessages.get(id);
-  if (pending) {
-    pendingMessages.delete(id);
-    if (action === 'error') {
-      pending.reject(new Error(data.error));
-    } else {
-      pending.resolve(data);
-    }
-  }
-}
-
-// Send message to sandbox
-function sendToSandbox(action, data = {}) {
-  return new Promise((resolve, reject) => {
-    if (!sandboxFrame || !sandboxReady) {
-      reject(new Error('Sandbox not ready'));
-      return;
-    }
-
-    const id = ++messageId;
-    pendingMessages.set(id, { resolve, reject });
-
-    sandboxFrame.contentWindow.postMessage({ id, action, data }, '*');
-
-    // Timeout after 60 seconds (model loading can take time)
-    setTimeout(() => {
-      if (pendingMessages.has(id)) {
-        pendingMessages.delete(id);
-        reject(new Error('Sandbox timeout'));
-      }
-    }, 60000);
-  });
-}
-
 // Initialize Whisper model
-async function initWhisper() {
-  console.log('[Offscreen] Creating sandbox...');
-  await createSandbox();
+async function initWhisper(onProgress) {
+  if (transcriber) return transcriber;
 
-  console.log('[Offscreen] Initializing Whisper...');
-  return sendToSandbox('initWhisper');
+  console.log('[Offscreen] Loading Whisper model...');
+
+  // Configure transformers.js (loaded globally from lib/transformers.min.js)
+  if (typeof Transformers !== 'undefined') {
+    Transformers.env.allowLocalModels = false;
+    Transformers.env.useBrowserCache = true;
+
+    transcriber = await Transformers.pipeline(
+      'automatic-speech-recognition',
+      'Xenova/whisper-small',
+      {
+        progress_callback: onProgress
+      }
+    );
+  } else {
+    throw new Error('Transformers library not loaded');
+  }
+
+  console.log('[Offscreen] Whisper model loaded!');
+  return transcriber;
 }
 
-// Transcribe audio blob
+// Process audio blob and transcribe
 async function transcribeAudio(audioBlob, language) {
+  if (!transcriber) {
+    throw new Error('Whisper model not initialized');
+  }
+
   console.log('[Offscreen] Transcribing audio blob, size:', audioBlob.size);
 
-  // Convert blob to array buffer then to Float32Array
+  // Convert blob to array buffer
   const arrayBuffer = await audioBlob.arrayBuffer();
 
   // Decode audio data
-  const audioContext = new AudioContext({ sampleRate: 16000 });
-  const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
-  const audioData = Array.from(audioBuffer.getChannelData(0));
-  await audioContext.close();
+  const tempContext = new AudioContext({ sampleRate: 16000 });
+  const audioBuffer = await tempContext.decodeAudioData(arrayBuffer);
 
-  // Send to sandbox for transcription
-  const result = await sendToSandbox('transcribe', { audioData, language });
+  // Get audio data as Float32Array
+  const audioData = audioBuffer.getChannelData(0);
+
+  // Map language codes
+  const langMap = {
+    'zh-CN': 'chinese',
+    'zh-TW': 'chinese',
+    'en-US': 'english',
+    'en-GB': 'english',
+    'ja-JP': 'japanese',
+    'ko-KR': 'korean'
+  };
+
+  const whisperLang = langMap[language] || 'chinese';
+
+  // Transcribe
+  const result = await transcriber(audioData, {
+    language: whisperLang,
+    task: 'transcribe',
+    chunk_length_s: 30,
+    stride_length_s: 5
+  });
+
+  await tempContext.close();
+
+  console.log('[Offscreen] Transcription result:', result.text);
   return result.text;
 }
 
@@ -241,12 +194,17 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   console.log('[Offscreen] Received:', request.action);
 
   if (request.action === 'initWhisper') {
-    initWhisper()
-      .then(() => sendResponse({ success: true }))
-      .catch((error) => {
-        console.error('[Offscreen] Whisper init error:', error);
-        sendResponse({ success: false, error: error.message });
+    initWhisper((progress) => {
+      chrome.runtime.sendMessage({
+        action: 'modelProgress',
+        progress: progress
       });
+    }).then(() => {
+      sendResponse({ success: true });
+    }).catch((error) => {
+      console.error('[Offscreen] Whisper init error:', error);
+      sendResponse({ success: false, error: error.message });
+    });
     return true;
   }
 
