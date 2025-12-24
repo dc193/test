@@ -18,7 +18,7 @@ CORS(app)
 
 # 全局模型变量
 model = None
-model_name = "small"  # 可选: tiny, base, small, medium, large
+model_name = "medium"  # 可选: tiny, base, small, medium, large
 
 def get_model():
     global model
@@ -34,14 +34,19 @@ def index():
 
 @app.route('/transcribe', methods=['POST'])
 def transcribe():
-    if 'audio' not in request.files:
+    # 支持 'audio' 或 'file' 字段
+    audio_file = request.files.get('audio') or request.files.get('file')
+    if not audio_file:
         return jsonify({'error': '没有音频文件'}), 400
 
-    audio_file = request.files['audio']
     language = request.form.get('language', 'zh')
 
+    # 获取文件扩展名
+    filename = audio_file.filename or 'audio.webm'
+    ext = os.path.splitext(filename)[1] or '.webm'
+
     # 保存临时文件
-    with tempfile.NamedTemporaryFile(suffix='.webm', delete=False) as tmp:
+    with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as tmp:
         audio_file.save(tmp.name)
         tmp_path = tmp.name
 

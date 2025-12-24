@@ -43,6 +43,39 @@
       font-size: 14px;
     }
 
+    .tabs {
+      display: flex;
+      margin-bottom: 20px;
+      border-bottom: 2px solid #e0e0e0;
+    }
+
+    .tab {
+      flex: 1;
+      padding: 12px;
+      text-align: center;
+      cursor: pointer;
+      border: none;
+      background: none;
+      font-size: 15px;
+      font-weight: 500;
+      color: #666;
+      transition: all 0.2s;
+    }
+
+    .tab.active {
+      color: #667eea;
+      border-bottom: 2px solid #667eea;
+      margin-bottom: -2px;
+    }
+
+    .tab-content {
+      display: none;
+    }
+
+    .tab-content.active {
+      display: block;
+    }
+
     .section {
       margin-bottom: 20px;
     }
@@ -175,6 +208,73 @@
       background: #e0e0e0;
     }
 
+    .upload-area {
+      border: 2px dashed #e0e0e0;
+      border-radius: 8px;
+      padding: 40px 20px;
+      text-align: center;
+      cursor: pointer;
+      transition: all 0.2s;
+      margin-bottom: 20px;
+    }
+
+    .upload-area:hover {
+      border-color: #667eea;
+      background: #f7f8fa;
+    }
+
+    .upload-area.dragover {
+      border-color: #667eea;
+      background: #eef2ff;
+    }
+
+    .upload-icon {
+      font-size: 48px;
+      margin-bottom: 12px;
+    }
+
+    .upload-text {
+      color: #666;
+      margin-bottom: 8px;
+    }
+
+    .upload-hint {
+      font-size: 12px;
+      color: #999;
+    }
+
+    .file-info {
+      display: none;
+      padding: 12px 16px;
+      background: #f0f9ff;
+      border-radius: 8px;
+      margin-bottom: 20px;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .file-info.show {
+      display: flex;
+    }
+
+    .file-name {
+      flex: 1;
+      font-weight: 500;
+      color: #333;
+    }
+
+    .file-remove {
+      background: none;
+      border: none;
+      color: #999;
+      cursor: pointer;
+      font-size: 18px;
+    }
+
+    .file-remove:hover {
+      color: #e53e3e;
+    }
+
     .note {
       margin-top: 24px;
       padding: 16px;
@@ -188,12 +288,21 @@
       display: block;
       margin-bottom: 8px;
     }
+
+    #fileInput {
+      display: none;
+    }
   </style>
 </head>
 <body>
   <div class="container">
     <h1>视频语音转文字</h1>
-    <p class="subtitle">捕获屏幕/标签页音频，使用本地 Whisper 转录</p>
+    <p class="subtitle">使用本地 Whisper Medium 模型转录（支持标点）</p>
+
+    <div class="tabs">
+      <button class="tab active" data-tab="record">屏幕录制</button>
+      <button class="tab" data-tab="upload">上传文件</button>
+    </div>
 
     <div class="section">
       <label for="language">识别语言：</label>
@@ -205,14 +314,38 @@
       </select>
     </div>
 
-    <div class="controls">
-      <button id="startBtn" class="btn btn-primary">开始录制</button>
-      <button id="stopBtn" class="btn btn-danger" disabled>停止录制</button>
+    <!-- 屏幕录制 -->
+    <div id="recordTab" class="tab-content active">
+      <div class="controls">
+        <button id="startBtn" class="btn btn-primary">开始录制</button>
+        <button id="stopBtn" class="btn btn-danger" disabled>停止录制</button>
+      </div>
+
+      <div class="status" id="status">
+        <span class="status-text" id="statusText">准备就绪</span>
+        <span class="timer" id="timer">00:00</span>
+      </div>
     </div>
 
-    <div class="status" id="status">
-      <span class="status-text" id="statusText">准备就绪</span>
-      <span class="timer" id="timer">00:00</span>
+    <!-- 上传文件 -->
+    <div id="uploadTab" class="tab-content">
+      <div class="upload-area" id="uploadArea">
+        <div class="upload-icon">📁</div>
+        <div class="upload-text">点击选择或拖放文件</div>
+        <div class="upload-hint">支持 MP3, WAV, M4A, MP4, WebM 等格式</div>
+      </div>
+      <input type="file" id="fileInput" accept="audio/*,video/*">
+
+      <div class="file-info" id="fileInfo">
+        <span class="file-name" id="fileName"></span>
+        <button class="file-remove" id="fileRemove">✕</button>
+      </div>
+
+      <button id="uploadBtn" class="btn btn-primary" style="width:100%" disabled>开始转录</button>
+
+      <div class="status" id="uploadStatus" style="margin-top: 20px;">
+        <span class="status-text" id="uploadStatusText">选择文件后点击转录</span>
+      </div>
     </div>
 
     <div class="section">
@@ -228,14 +361,15 @@
 
     <div class="note">
       <strong>使用说明：</strong>
-      1. 点击"开始录制"，选择要录制的标签页或整个屏幕<br>
-      2. 播放视频，音频会被实时捕获<br>
-      3. 点击"停止录制"，等待转录完成<br>
-      4. 转录结果会显示在文本框中
+      <b>屏幕录制：</b>选择标签页/屏幕，勾选"共享音频"<br>
+      <b>上传文件：</b>直接上传音频或视频文件转录
     </div>
   </div>
 
   <script>
+    // 元素
+    const tabs = document.querySelectorAll('.tab');
+    const tabContents = document.querySelectorAll('.tab-content');
     const startBtn = document.getElementById('startBtn');
     const stopBtn = document.getElementById('stopBtn');
     const statusText = document.getElementById('statusText');
@@ -246,16 +380,33 @@
     const saveBtn = document.getElementById('saveBtn');
     const clearBtn = document.getElementById('clearBtn');
     const languageSelect = document.getElementById('language');
+    const uploadArea = document.getElementById('uploadArea');
+    const fileInput = document.getElementById('fileInput');
+    const fileInfo = document.getElementById('fileInfo');
+    const fileName = document.getElementById('fileName');
+    const fileRemove = document.getElementById('fileRemove');
+    const uploadBtn = document.getElementById('uploadBtn');
+    const uploadStatusText = document.getElementById('uploadStatusText');
 
     let mediaRecorder = null;
     let audioChunks = [];
     let timerInterval = null;
     let startTime = null;
+    let selectedFile = null;
 
-    // 开始录制
+    // 标签切换
+    tabs.forEach(tab => {
+      tab.addEventListener('click', () => {
+        tabs.forEach(t => t.classList.remove('active'));
+        tabContents.forEach(c => c.classList.remove('active'));
+        tab.classList.add('active');
+        document.getElementById(tab.dataset.tab + 'Tab').classList.add('active');
+      });
+    });
+
+    // ===== 屏幕录制 =====
     startBtn.addEventListener('click', async () => {
       try {
-        // 请求屏幕/标签页共享（包含音频）
         const stream = await navigator.mediaDevices.getDisplayMedia({
           video: true,
           audio: {
@@ -265,7 +416,6 @@
           }
         });
 
-        // 只保留音频轨道
         const audioTracks = stream.getAudioTracks();
         if (audioTracks.length === 0) {
           alert('请确保选择了"共享标签页音频"或"共享系统音频"选项');
@@ -273,13 +423,9 @@
           return;
         }
 
-        // 停止视频轨道（我们只需要音频）
         stream.getVideoTracks().forEach(t => t.stop());
-
-        // 创建只有音频的流
         const audioStream = new MediaStream(audioTracks);
 
-        // 设置录制器
         mediaRecorder = new MediaRecorder(audioStream, {
           mimeType: 'audio/webm;codecs=opus'
         });
@@ -294,39 +440,10 @@
 
         mediaRecorder.onstop = async () => {
           statusText.textContent = '正在转录...';
-
           const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
-
-          // 发送到服务器转录
-          const formData = new FormData();
-          formData.append('audio', audioBlob, 'audio.webm');
-          formData.append('language', languageSelect.value);
-
-          try {
-            const response = await fetch('/transcribe', {
-              method: 'POST',
-              body: formData
-            });
-
-            const result = await response.json();
-
-            if (result.success) {
-              if (transcript.value) {
-                transcript.value += '\n' + result.text;
-              } else {
-                transcript.value = result.text;
-              }
-              updateButtons();
-              statusText.textContent = '转录完成';
-            } else {
-              statusText.textContent = '转录失败: ' + result.error;
-            }
-          } catch (error) {
-            statusText.textContent = '请求失败: ' + error.message;
-          }
+          await transcribeBlob(audioBlob, 'audio.webm', statusText);
         };
 
-        // 开始录制
         mediaRecorder.start();
         startTime = Date.now();
         startBtn.disabled = true;
@@ -334,10 +451,8 @@
         statusDiv.classList.add('recording');
         statusText.textContent = '正在录制...';
 
-        // 启动计时器
         timerInterval = setInterval(updateTimer, 1000);
 
-        // 当共享停止时自动停止录制
         audioTracks[0].onended = () => {
           if (mediaRecorder && mediaRecorder.state === 'recording') {
             stopRecording();
@@ -350,21 +465,18 @@
       }
     });
 
-    // 停止录制
     stopBtn.addEventListener('click', stopRecording);
 
     function stopRecording() {
       if (mediaRecorder && mediaRecorder.state === 'recording') {
         mediaRecorder.stop();
       }
-
       clearInterval(timerInterval);
       startBtn.disabled = false;
       stopBtn.disabled = true;
       statusDiv.classList.remove('recording');
     }
 
-    // 更新计时器
     function updateTimer() {
       const elapsed = Math.floor((Date.now() - startTime) / 1000);
       const minutes = Math.floor(elapsed / 60).toString().padStart(2, '0');
@@ -372,21 +484,102 @@
       timerEl.textContent = `${minutes}:${seconds}`;
     }
 
-    // 更新按钮状态
+    // ===== 文件上传 =====
+    uploadArea.addEventListener('click', () => fileInput.click());
+
+    uploadArea.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      uploadArea.classList.add('dragover');
+    });
+
+    uploadArea.addEventListener('dragleave', () => {
+      uploadArea.classList.remove('dragover');
+    });
+
+    uploadArea.addEventListener('drop', (e) => {
+      e.preventDefault();
+      uploadArea.classList.remove('dragover');
+      if (e.dataTransfer.files.length > 0) {
+        selectFile(e.dataTransfer.files[0]);
+      }
+    });
+
+    fileInput.addEventListener('change', () => {
+      if (fileInput.files.length > 0) {
+        selectFile(fileInput.files[0]);
+      }
+    });
+
+    function selectFile(file) {
+      selectedFile = file;
+      fileName.textContent = file.name;
+      fileInfo.classList.add('show');
+      uploadBtn.disabled = false;
+      uploadStatusText.textContent = '准备就绪';
+    }
+
+    fileRemove.addEventListener('click', () => {
+      selectedFile = null;
+      fileInput.value = '';
+      fileInfo.classList.remove('show');
+      uploadBtn.disabled = true;
+      uploadStatusText.textContent = '选择文件后点击转录';
+    });
+
+    uploadBtn.addEventListener('click', async () => {
+      if (!selectedFile) return;
+
+      uploadBtn.disabled = true;
+      uploadStatusText.textContent = '正在转录...';
+
+      await transcribeBlob(selectedFile, selectedFile.name, uploadStatusText);
+
+      uploadBtn.disabled = false;
+    });
+
+    // ===== 通用转录函数 =====
+    async function transcribeBlob(blob, filename, statusEl) {
+      const formData = new FormData();
+      formData.append('file', blob, filename);
+      formData.append('language', languageSelect.value);
+
+      try {
+        const response = await fetch('/transcribe', {
+          method: 'POST',
+          body: formData
+        });
+
+        const result = await response.json();
+
+        if (result.success) {
+          if (transcript.value) {
+            transcript.value += '\n' + result.text;
+          } else {
+            transcript.value = result.text;
+          }
+          updateButtons();
+          statusEl.textContent = '转录完成';
+        } else {
+          statusEl.textContent = '转录失败: ' + result.error;
+        }
+      } catch (error) {
+        statusEl.textContent = '请求失败: ' + error.message;
+      }
+    }
+
+    // ===== 通用功能 =====
     function updateButtons() {
       const hasText = transcript.value.trim().length > 0;
       copyBtn.disabled = !hasText;
       saveBtn.disabled = !hasText;
     }
 
-    // 复制
     copyBtn.addEventListener('click', async () => {
       await navigator.clipboard.writeText(transcript.value);
       copyBtn.textContent = '已复制!';
       setTimeout(() => { copyBtn.textContent = '复制文本'; }, 2000);
     });
 
-    // 保存
     saveBtn.addEventListener('click', () => {
       const blob = new Blob([transcript.value], { type: 'text/plain;charset=utf-8' });
       const url = URL.createObjectURL(blob);
@@ -397,15 +590,14 @@
       URL.revokeObjectURL(url);
     });
 
-    // 清空
     clearBtn.addEventListener('click', () => {
       transcript.value = '';
       timerEl.textContent = '00:00';
       statusText.textContent = '准备就绪';
+      uploadStatusText.textContent = '选择文件后点击转录';
       updateButtons();
     });
 
-    // 初始化
     updateButtons();
   </script>
 </body>
