@@ -13,6 +13,13 @@
   "host_permissions": [
     "<all_urls>"
   ],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'",
+    "sandbox": "sandbox allow-scripts allow-forms allow-popups allow-modals; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net https://huggingface.co https://*.huggingface.co; object-src 'self'"
+  },
+  "sandbox": {
+    "pages": ["sandbox.html"]
+  },
   "action": {
     "default_popup": "popup.html",
     "default_icon": {
@@ -38,7 +45,7 @@
   ],
   "web_accessible_resources": [
     {
-      "resources": ["whisper/*", "offscreen.html"],
+      "resources": ["whisper/*", "offscreen.html", "sandbox.html"],
       "matches": ["<all_urls>"]
     }
   ]
