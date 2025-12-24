@@ -49,14 +49,23 @@ def get_device():
     return device
 
 def get_model():
-    global model, progress_info
+    global model, device, progress_info
     if model is None:
         progress_info['status'] = 'loading'
         progress_info['message'] = f'正在加载 Whisper {model_name} 模型...'
-        print(f"正在加载 Whisper {model_name} 模型到 {get_device()}...")
 
-        # 加载模型到指定设备
-        model = whisper.load_model(model_name, device=get_device())
+        target_device = get_device()
+        print(f"正在加载 Whisper {model_name} 模型到 {target_device}...")
+
+        try:
+            # 尝试加载到目标设备
+            model = whisper.load_model(model_name, device=target_device)
+        except Exception as e:
+            # MPS 可能有兼容性问题，回退到 CPU
+            print(f"⚠ {target_device} 加载失败: {e}")
+            print("回退到 CPU...")
+            device = "cpu"
+            model = whisper.load_model(model_name, device="cpu")
 
         print("模型加载完成！")
         progress_info['status'] = 'idle'
