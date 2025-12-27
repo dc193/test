@@ -406,7 +406,7 @@ class SelfEvolvingKnowledge:
 ## 结果评估
 {context.outcome or '未知'}
 
-{f"## 用户反馈\n{context.user_feedback}" if context.user_feedback else ""}
+{"## 用户反馈" + chr(10) + context.user_feedback if context.user_feedback else ""}
 
 ---
 
