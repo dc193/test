@@ -1533,8 +1533,8 @@ async def learn_from_github_api(request: dict):
         # 传入 LLM provider，让 AI 分析代码
         learner = GitHubLearner(kb, llm_provider=company.llm)
 
-        # 学习仓库
-        result = learner.learn_from_url(
+        # 学习仓库 (async)
+        result = await learner.learn_from_url(
             repo_url,
             max_code_files=request.get("max_files", 10),
             cleanup=True

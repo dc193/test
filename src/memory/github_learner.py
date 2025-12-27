@@ -121,7 +121,7 @@ class GitHubLearner:
         self.workspace = Path(workspace_dir)
         self.workspace.mkdir(parents=True, exist_ok=True)
 
-    def learn_from_url(
+    async def learn_from_url(
         self,
         repo_url: str,
         max_code_files: int = 10,
@@ -147,8 +147,8 @@ class GitHubLearner:
             return {"error": "Clone 失败"}
 
         try:
-            # 用 LLM 分析并提炼
-            result = self._analyze_with_llm(repo_info, max_code_files, max_file_size)
+            # 用 LLM 分析并提炼 (async)
+            result = await self._analyze_with_llm(repo_info, max_code_files, max_file_size)
             return result
         finally:
             # 清理
@@ -195,7 +195,7 @@ class GitHubLearner:
             print(f"Clone 错误: {e}")
             return None
 
-    def _analyze_with_llm(
+    async def _analyze_with_llm(
         self,
         repo_info: RepoInfo,
         max_code_files: int,
@@ -241,11 +241,8 @@ class GitHubLearner:
                 code_files=code_text[:20000] if code_text else "（无代码文件）"
             )
 
-            # 调用 LLM
-            import asyncio
-            analysis = asyncio.get_event_loop().run_until_complete(
-                self.llm.chat(prompt)
-            )
+            # 调用 LLM (async)
+            analysis = await self.llm.chat(prompt)
 
             stats["analysis"] = analysis
 
