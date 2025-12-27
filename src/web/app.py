@@ -1077,7 +1077,10 @@ async def god_layer_page():
                     AI 会分析仓库代码，提炼核心架构、设计模式和可复用经验
                 </p>
                 <input type="text" id="github-url" placeholder="https://github.com/user/repo">
-                <input type="number" id="max-files" value="10" min="1" max="30" placeholder="分析文件数">
+                <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 10px;">
+                    <label style="color: #888; font-size: 0.85em; white-space: nowrap;">分析文件数:</label>
+                    <input type="number" id="max-files" value="10" min="1" max="30" style="width: 80px;">
+                </div>
                 <button onclick="learnFromGithub()" id="learn-btn">AI 分析学习</button>
                 <div class="status" id="learn-status"></div>
             </div>
