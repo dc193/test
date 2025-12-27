@@ -363,11 +363,19 @@ def create_knowledge_base(
         KnowledgeBase 实例
     """
     embedding = create_embedding_provider(embedding_type)
-    vector_store = create_vector_store(
-        store_type,
-        persist_dir=str(Path(data_dir) / store_type),
-        dimension=embedding.dimension if store_type == "faiss" else None
-    )
+
+    # ChromaDB 不需要 dimension，只有 FAISS 需要
+    if store_type == "faiss":
+        vector_store = create_vector_store(
+            store_type,
+            persist_dir=str(Path(data_dir) / store_type),
+            dimension=embedding.dimension
+        )
+    else:
+        vector_store = create_vector_store(
+            store_type,
+            persist_dir=str(Path(data_dir) / store_type)
+        )
 
     return KnowledgeBase(
         embedding_provider=embedding,
