@@ -266,11 +266,205 @@ def get_available_providers() -> list[dict]:
     return available
 
 
-def create_llm_provider(provider_name: Optional[str] = None, config_path: str = "config/llm.yaml") -> LLMProvider:
+def list_models_for_provider(provider_name: str) -> list[dict]:
+    """获取指定Provider的可用模型列表
+
+    Returns:
+        list of {"id": "model-id", "name": "显示名称", "description": "描述"}
+    """
+    api_key = get_api_key(provider_name)
+    if api_key is None:
+        return []
+
+    try:
+        if provider_name == "openai":
+            return _list_openai_models(api_key)
+        elif provider_name == "claude":
+            return _list_claude_models()
+        elif provider_name == "gemini":
+            return _list_gemini_models(api_key)
+        elif provider_name in ("local", "ollama"):
+            return _list_ollama_models()
+        elif provider_name == "grok":
+            return _list_grok_models()
+        elif provider_name == "qwen":
+            return _list_qwen_models()
+        else:
+            return []
+    except Exception as e:
+        print(f"获取 {provider_name} 模型列表失败: {e}")
+        return []
+
+
+def _list_openai_models(api_key: str) -> list[dict]:
+    """获取OpenAI可用模型"""
+    try:
+        from openai import OpenAI
+        client = OpenAI(api_key=api_key)
+        models = client.models.list()
+
+        # 过滤出聊天模型
+        chat_models = []
+        for m in models.data:
+            model_id = m.id
+            # 只保留GPT系列聊天模型
+            if any(x in model_id for x in ['gpt-4', 'gpt-3.5']):
+                if 'instruct' not in model_id:  # 排除instruct模型
+                    chat_models.append({
+                        "id": model_id,
+                        "name": model_id,
+                        "description": _get_openai_model_desc(model_id)
+                    })
+
+        # 按名称排序，把最新的放前面
+        chat_models.sort(key=lambda x: x["id"], reverse=True)
+        return chat_models
+    except Exception as e:
+        print(f"获取OpenAI模型列表失败: {e}")
+        # 返回默认列表
+        return [
+            {"id": "gpt-4o", "name": "GPT-4o", "description": "最新最强"},
+            {"id": "gpt-4-turbo", "name": "GPT-4 Turbo", "description": "快速版GPT-4"},
+            {"id": "gpt-4", "name": "GPT-4", "description": "标准版"},
+            {"id": "gpt-3.5-turbo", "name": "GPT-3.5 Turbo", "description": "快速便宜"},
+        ]
+
+
+def _get_openai_model_desc(model_id: str) -> str:
+    """获取OpenAI模型描述"""
+    if "gpt-4o" in model_id:
+        return "最新多模态模型"
+    elif "gpt-4-turbo" in model_id:
+        return "快速版GPT-4"
+    elif "gpt-4" in model_id:
+        return "强大推理能力"
+    elif "gpt-3.5" in model_id:
+        return "快速便宜"
+    return ""
+
+
+def _list_claude_models() -> list[dict]:
+    """获取Claude可用模型 (Anthropic没有list API，使用预定义列表)"""
+    return [
+        {"id": "claude-sonnet-4-20250514", "name": "Claude Sonnet 4", "description": "最新最强"},
+        {"id": "claude-3-5-sonnet-20241022", "name": "Claude 3.5 Sonnet", "description": "推荐 - 性价比最高"},
+        {"id": "claude-3-opus-20240229", "name": "Claude 3 Opus", "description": "最强推理"},
+        {"id": "claude-3-sonnet-20240229", "name": "Claude 3 Sonnet", "description": "平衡性能"},
+        {"id": "claude-3-haiku-20240307", "name": "Claude 3 Haiku", "description": "快速便宜"},
+    ]
+
+
+def _list_gemini_models(api_key: str) -> list[dict]:
+    """获取Gemini可用模型"""
+    try:
+        import google.generativeai as genai
+        genai.configure(api_key=api_key)
+
+        models = []
+        for m in genai.list_models():
+            # 只保留支持generateContent的模型
+            if 'generateContent' in m.supported_generation_methods:
+                model_id = m.name.replace('models/', '')
+                models.append({
+                    "id": model_id,
+                    "name": m.display_name,
+                    "description": m.description[:50] + "..." if len(m.description) > 50 else m.description
+                })
+
+        return models
+    except Exception as e:
+        print(f"获取Gemini模型列表失败: {e}")
+        # 返回默认列表
+        return [
+            {"id": "gemini-1.5-pro", "name": "Gemini 1.5 Pro", "description": "最强版本"},
+            {"id": "gemini-1.5-flash", "name": "Gemini 1.5 Flash", "description": "快速版本"},
+            {"id": "gemini-pro", "name": "Gemini Pro", "description": "标准版本"},
+        ]
+
+
+def _list_ollama_models() -> list[dict]:
+    """获取本地Ollama可用模型"""
+    try:
+        import requests
+        resp = requests.get("http://localhost:11434/api/tags", timeout=5)
+        if resp.status_code == 200:
+            data = resp.json()
+            models = []
+            for m in data.get("models", []):
+                models.append({
+                    "id": m["name"],
+                    "name": m["name"],
+                    "description": f"本地模型 - {m.get('size', 'unknown')} bytes"
+                })
+            return models
+    except Exception as e:
+        print(f"获取Ollama模型列表失败: {e}")
+
+    return [{"id": "llama2", "name": "Llama 2", "description": "需要先运行 ollama pull llama2"}]
+
+
+def _list_grok_models() -> list[dict]:
+    """获取Grok可用模型"""
+    return [
+        {"id": "grok-beta", "name": "Grok Beta", "description": "xAI最新模型"},
+    ]
+
+
+def _list_qwen_models() -> list[dict]:
+    """获取通义千问可用模型"""
+    return [
+        {"id": "qwen-max", "name": "Qwen Max", "description": "最强版本"},
+        {"id": "qwen-plus", "name": "Qwen Plus", "description": "增强版"},
+        {"id": "qwen-turbo", "name": "Qwen Turbo", "description": "快速版"},
+    ]
+
+
+def get_all_available_models() -> list[dict]:
+    """获取所有可用的模型（按Provider分组）
+
+    Returns:
+        list of {"provider": "provider_name", "provider_display": "显示名", "models": [...]}
+    """
+    provider_display_names = {
+        "openai": "OpenAI",
+        "claude": "Anthropic Claude",
+        "gemini": "Google Gemini",
+        "grok": "xAI Grok",
+        "qwen": "阿里云通义千问",
+        "local": "本地 Ollama",
+        "ollama": "本地 Ollama"
+    }
+
+    result = []
+    for provider_name, config in PROVIDER_CONFIGS.items():
+        if provider_name == "ollama":  # 避免重复，local和ollama是同一个
+            continue
+
+        api_key = get_api_key(provider_name)
+        if api_key is None:
+            continue
+
+        models = list_models_for_provider(provider_name)
+        if models:
+            result.append({
+                "provider": provider_name,
+                "provider_display": provider_display_names.get(provider_name, provider_name),
+                "models": models
+            })
+
+    return result
+
+
+def create_llm_provider(
+    provider_name: Optional[str] = None,
+    model_id: Optional[str] = None,
+    config_path: str = "config/llm.yaml"
+) -> LLMProvider:
     """创建LLM Provider
 
     Args:
         provider_name: 指定provider名称，如果为None则使用配置文件中的默认值
+        model_id: 指定模型ID，如果为None则使用provider的默认模型
         config_path: 配置文件路径
 
     Returns:
@@ -296,7 +490,9 @@ def create_llm_provider(provider_name: Optional[str] = None, config_path: str = 
 
     # 获取配置参数
     base_url = provider_config.get("base_url", default_config.get("base_url"))
-    model = provider_config.get("model", default_config.get("default_model"))
+
+    # 模型优先级：参数传入 > 配置文件 > 默认值
+    model = model_id or provider_config.get("model", default_config.get("default_model"))
 
     # 根据类型创建Provider
     provider_type = default_config.get("type", "openai_compatible")

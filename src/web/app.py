@@ -11,7 +11,7 @@ from typing import Optional
 
 from ..core.company import Company, AgentInfo, AgentStatus
 from ..core.message import Message
-from ..core.llm import get_available_providers, create_llm_provider
+from ..core.llm import get_available_providers, create_llm_provider, get_all_available_models
 from ..roles.ceo import CEO
 from ..roles.chro import CHRO
 from ..roles.coo import COO
@@ -23,27 +23,31 @@ app = FastAPI(title="AI Company", version="0.1.0")
 # 全局状态
 company_instance: Optional[Company] = None
 current_provider: Optional[str] = None  # 不预设默认，让用户选择
+current_model: Optional[str] = None  # 当前选择的模型
 websocket_connections: list[WebSocket] = []
 
 
-def get_company(provider_name: Optional[str] = None) -> Optional[Company]:
+def get_company(provider_name: Optional[str] = None, model_id: Optional[str] = None) -> Optional[Company]:
     """获取或创建公司实例"""
-    global company_instance, current_provider
+    global company_instance, current_provider, current_model
 
     # 如果还没选择provider，返回None
     if provider_name is None and current_provider is None:
         return None
 
-    # 如果provider变了，重新创建
-    if provider_name and provider_name != current_provider:
+    # 如果provider或model变了，重新创建
+    if (provider_name and provider_name != current_provider) or (model_id and model_id != current_model):
         company_instance = None
-        current_provider = provider_name
+        if provider_name:
+            current_provider = provider_name
+        if model_id:
+            current_model = model_id
 
     if company_instance is None:
         if current_provider is None:
             raise ValueError("请先选择一个LLM Provider")
 
-        llm = create_llm_provider(current_provider)
+        llm = create_llm_provider(current_provider, model_id=current_model)
 
         company_instance = Company(llm=llm)
         company_instance.memory = LocalMemoryStore()
@@ -385,16 +389,59 @@ async def index():
             color: #4ecca3;
         }
         .provider-btn:disabled .provider-status { color: #888; }
+
+        /* 模型分组样式 */
+        .model-group {
+            margin-bottom: 1rem;
+            text-align: left;
+        }
+        .model-group-title {
+            font-size: 0.85rem;
+            color: #e94560;
+            margin-bottom: 0.5rem;
+            padding-bottom: 0.3rem;
+            border-bottom: 1px solid #0f3460;
+        }
+        .model-btn {
+            width: 100%;
+            padding: 0.8rem 1rem;
+            margin-bottom: 0.3rem;
+            border: 1px solid #0f3460;
+            border-radius: 8px;
+            background: #0f3460;
+            color: #eee;
+            font-size: 0.9rem;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            text-align: left;
+        }
+        .model-btn:hover {
+            border-color: #e94560;
+            background: #1a1a3e;
+        }
+        .model-btn .model-name { font-weight: bold; }
+        .model-btn .model-desc {
+            font-size: 0.75rem;
+            color: #888;
+        }
+        .provider-selection-box {
+            max-height: 80vh;
+            overflow-y: auto;
+        }
     </style>
 </head>
 <body>
-    <!-- Provider选择界面 -->
+    <!-- 模型选择界面 -->
     <div class="provider-selection-overlay" id="provider-overlay">
         <div class="provider-selection-box">
             <h2>AI Company v0.1</h2>
-            <p>选择一个 LLM Provider 开始使用</p>
+            <p>选择一个模型开始使用</p>
             <div class="provider-list" id="provider-list">
-                <!-- 动态加载 -->
+                <!-- 动态加载模型列表 -->
+                <div style="color: #888;">加载中...</div>
             </div>
         </div>
     </div>
@@ -404,15 +451,10 @@ async def index():
         <div class="header-right">
             <div class="provider-select">
                 <label>模型:</label>
-                <select id="provider-select" onchange="changeProvider()">
-                    <option value="openai">OpenAI (GPT-4)</option>
-                    <option value="claude">Claude</option>
-                    <option value="gemini">Gemini</option>
-                    <option value="grok">Grok</option>
-                    <option value="qwen">Qwen (通义)</option>
-                    <option value="local">本地 (Ollama)</option>
+                <select id="model-select" onchange="changeModel()">
+                    <!-- 动态加载 -->
                 </select>
-                <span class="current-provider" id="current-provider">-</span>
+                <span class="current-provider" id="current-model-display">-</span>
             </div>
             <div class="status">状态: <span class="state" id="state">等待中</span></div>
         </div>
@@ -481,13 +523,14 @@ async def index():
         const progressFillEl = document.getElementById('progress-fill');
         const progressTextEl = document.getElementById('progress-text');
         const taskListEl = document.getElementById('task-list');
-        const providerSelect = document.getElementById('provider-select');
-        const currentProviderEl = document.getElementById('current-provider');
+        const modelSelect = document.getElementById('model-select');
+        const currentModelDisplay = document.getElementById('current-model-display');
         const providerOverlay = document.getElementById('provider-overlay');
         const providerListEl = document.getElementById('provider-list');
 
         let ws = null;
-        let providerSelected = false;
+        let modelSelected = false;
+        let allModels = [];  // 缓存所有模型数据
 
         function connectWebSocket() {
             const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -632,66 +675,77 @@ async def index():
             }
         }
 
-        async function loadProviders() {
+        async function loadModels() {
             try {
-                const response = await fetch('/api/providers');
-                const providers = await response.json();
+                const response = await fetch('/api/models');
+                allModels = await response.json();
+
+                // 更新初始选择界面 - 按Provider分组显示模型
+                if (allModels.length === 0) {
+                    providerListEl.innerHTML = '<div style="color: #888;">未找到可用模型，请配置API Key</div>';
+                    return;
+                }
+
+                let html = '';
+                allModels.forEach(group => {
+                    html += `<div class="model-group">
+                        <div class="model-group-title">${group.provider_display}</div>`;
+                    group.models.forEach(model => {
+                        html += `<button class="model-btn" onclick="selectModel('${group.provider}', '${model.id}')">
+                            <span class="model-name">${model.name}</span>
+                            <span class="model-desc">${model.description || ''}</span>
+                        </button>`;
+                    });
+                    html += '</div>';
+                });
+                providerListEl.innerHTML = html;
 
                 // 更新header中的下拉选择
-                providerSelect.innerHTML = providers.map(p =>
-                    `<option value="${p.name}" ${!p.has_key ? 'disabled' : ''}>${p.name.toUpperCase()}${!p.has_key ? ' (无Key)' : ''}</option>`
-                ).join('');
+                let selectHtml = '';
+                allModels.forEach(group => {
+                    selectHtml += `<optgroup label="${group.provider_display}">`;
+                    group.models.forEach(model => {
+                        selectHtml += `<option value="${group.provider}|${model.id}">${model.name}</option>`;
+                    });
+                    selectHtml += '</optgroup>';
+                });
+                modelSelect.innerHTML = selectHtml;
 
-                // 更新初始选择界面
-                const providerNames = {
-                    'openai': 'OpenAI (GPT-4)',
-                    'claude': 'Claude (Anthropic)',
-                    'gemini': 'Gemini (Google)',
-                    'grok': 'Grok (xAI)',
-                    'qwen': 'Qwen (通义千问)',
-                    'local': '本地 (Ollama)',
-                    'ollama': '本地 (Ollama)'
-                };
-
-                providerListEl.innerHTML = providers.map(p =>
-                    `<button class="provider-btn" ${!p.has_key ? 'disabled' : ''} onclick="selectInitialProvider('${p.name}')">
-                        <span class="provider-name">${providerNames[p.name] || p.name.toUpperCase()}</span>
-                        <span class="provider-status">${p.has_key ? '可用' : '未配置 API Key'}</span>
-                    </button>`
-                ).join('');
-
-                // 检查是否已选择provider
+                // 检查是否已选择模型
                 const statusResp = await fetch('/api/status');
                 const status = await statusResp.json();
 
                 if (status.need_provider_selection) {
                     providerOverlay.classList.remove('hidden');
-                    providerSelected = false;
+                    modelSelected = false;
                 } else {
                     providerOverlay.classList.add('hidden');
-                    providerSelected = true;
-                    if (status.current_provider) {
-                        providerSelect.value = status.current_provider;
-                        currentProviderEl.textContent = status.current_provider;
+                    modelSelected = true;
+                    if (status.current_model) {
+                        currentModelDisplay.textContent = status.current_model;
+                        modelSelect.value = status.current_provider + '|' + status.current_model;
                     }
                 }
-            } catch (e) { console.error(e); }
+            } catch (e) {
+                console.error(e);
+                providerListEl.innerHTML = '<div style="color: #e94560;">加载模型列表失败</div>';
+            }
         }
 
-        async function selectInitialProvider(provider) {
+        async function selectModel(provider, modelId) {
             try {
                 const resp = await fetch('/api/provider', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ provider })
+                    body: JSON.stringify({ provider, model: modelId })
                 });
                 const result = await resp.json();
 
                 if (result.status === 'ok') {
                     providerOverlay.classList.add('hidden');
-                    providerSelected = true;
-                    currentProviderEl.textContent = provider;
-                    providerSelect.value = provider;
+                    modelSelected = true;
+                    currentModelDisplay.textContent = modelId;
+                    modelSelect.value = provider + '|' + modelId;
                     resetChatUI();
                 } else {
                     alert('选择失败: ' + result.message);
@@ -701,9 +755,10 @@ async def index():
             }
         }
 
-        async function changeProvider() {
-            const provider = providerSelect.value;
-            if (!confirm(`切换到 ${provider.toUpperCase()} 将重置当前对话，确定吗？`)) {
+        async function changeModel() {
+            const value = modelSelect.value;
+            const [provider, modelId] = value.split('|');
+            if (!confirm(`切换到 ${modelId} 将重置当前对话，确定吗？`)) {
                 updateStatus();
                 return;
             }
@@ -712,9 +767,9 @@ async def index():
                 await fetch('/api/provider', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ provider })
+                    body: JSON.stringify({ provider, model: modelId })
                 });
-                currentProviderEl.textContent = provider;
+                currentModelDisplay.textContent = modelId;
                 resetChatUI();
             } catch (e) {
                 alert('切换失败: ' + e.message);
@@ -743,7 +798,7 @@ async def index():
 
         // 初始化
         connectWebSocket();
-        loadProviders();
+        loadModels();
         updateStatus();
         inputEl.focus();
         setInterval(updateStatus, 5000);
@@ -771,20 +826,30 @@ async def list_providers():
     return get_available_providers()
 
 
+@app.get("/api/models")
+async def list_models():
+    """获取所有可用的模型（按Provider分组）"""
+    return get_all_available_models()
+
+
 @app.post("/api/provider")
 async def set_provider(request: dict):
-    """切换Provider"""
-    global company_instance, current_provider
-    provider = request.get("provider", "openai")
+    """切换Provider和模型"""
+    global company_instance, current_provider, current_model
+    provider = request.get("provider")
+    model = request.get("model")
 
     # 重置公司实例
     company_instance = None
-    current_provider = provider
+    if provider:
+        current_provider = provider
+    if model:
+        current_model = model
 
     # 尝试创建新实例
     try:
-        get_company(provider)
-        return {"status": "ok", "provider": provider}
+        get_company(current_provider, current_model)
+        return {"status": "ok", "provider": current_provider, "model": current_model}
     except ValueError as e:
         return {"status": "error", "message": str(e)}
 
@@ -830,6 +895,7 @@ async def get_status():
         return {
             "ceo_state": None,
             "current_provider": None,
+            "current_model": None,
             "need_provider_selection": True,
             "agents": [],
             "progress": None,
@@ -842,6 +908,7 @@ async def get_status():
     return {
         "ceo_state": ceo.state,
         "current_provider": current_provider,
+        "current_model": current_model,
         "need_provider_selection": False,
         "agents": [
             {
