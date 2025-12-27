@@ -1,20 +1,47 @@
 # LLM配置 - 支持多种Provider
-# 使用环境变量设置API Key: OPENAI_API_KEY / ANTHROPIC_API_KEY / GEMINI_API_KEY
+# 设置对应的环境变量来启用Provider
 
-default_provider: gemini
+# 默认使用的Provider（会自动选择第一个有API Key的）
+# 可选: openai, claude, gemini, grok, qwen, local, ollama
+default_provider: openai
 
 providers:
+  # OpenAI
   openai:
     base_url: https://api.openai.com/v1
     model: gpt-4
+    # 环境变量: OPENAI_API_KEY
 
+  # Anthropic Claude
   claude:
     model: claude-3-opus-20240229
+    # 环境变量: ANTHROPIC_API_KEY
 
+  # Google Gemini
   gemini:
     model: gemini-1.5-pro
+    # 环境变量: GEMINI_API_KEY 或 GOOGLE_API_KEY
 
-  # 本地模型（如Ollama）
+  # xAI Grok
+  grok:
+    base_url: https://api.x.ai/v1
+    model: grok-beta
+    # 环境变量: XAI_API_KEY
+
+  # 阿里云 Qwen (通义千问)
+  qwen:
+    base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
+    model: qwen-plus
+    # 可选模型: qwen-turbo, qwen-plus, qwen-max
+    # 环境变量: DASHSCOPE_API_KEY
+
+  # 本地模型 (Ollama)
   local:
+    base_url: http://localhost:11434/v1
+    model: llama2
+    # 不需要API Key，确保Ollama正在运行
+
+  # Ollama (同local)
+  ollama:
     base_url: http://localhost:11434/v1
     model: llama2

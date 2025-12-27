@@ -8,6 +8,7 @@ from typing import Optional
 
 from ..core.company import Company, AgentInfo, AgentStatus
 from ..core.message import Message
+from ..core.llm import get_available_providers, create_llm_provider
 from ..roles.ceo import CEO
 from ..roles.chro import CHRO
 from ..roles.coo import COO
@@ -16,45 +17,50 @@ from ..memory.store import LocalMemoryStore
 
 app = FastAPI(title="AI Company", version="0.1.0")
 
-# 全局公司实例
+# 全局状态
 company_instance: Optional[Company] = None
+current_provider: str = "openai"
 websocket_connections: list[WebSocket] = []
 
 
-def get_company() -> Company:
+def get_company(provider_name: Optional[str] = None) -> Company:
     """获取或创建公司实例"""
-    global company_instance
-    if company_instance is None:
-        company_instance = Company()
+    global company_instance, current_provider
 
-        # 初始化记忆系统
+    # 如果provider变了，重新创建
+    if provider_name and provider_name != current_provider:
+        company_instance = None
+        current_provider = provider_name
+
+    if company_instance is None:
+        try:
+            llm = create_llm_provider(current_provider)
+        except ValueError as e:
+            # 如果当前provider没有key，尝试找一个有key的
+            providers = get_available_providers()
+            for p in providers:
+                if p["has_key"]:
+                    current_provider = p["name"]
+                    llm = create_llm_provider(current_provider)
+                    break
+            else:
+                raise ValueError("没有可用的LLM Provider，请设置API Key")
+
+        company_instance = Company(llm=llm)
         company_instance.memory = LocalMemoryStore()
 
-        # 创建并注册CEO
+        # 创建并注册agents
         ceo = CEO(company_instance)
-        company_instance.register_agent(
-            "ceo", ceo,
-            AgentInfo(id="ceo", name="CEO", role="ceo", level=1)
-        )
+        company_instance.register_agent("ceo", ceo, AgentInfo(id="ceo", name="CEO", role="ceo", level=1))
 
-        # 创建并注册CHRO
         chro = CHRO(company_instance)
-        company_instance.register_agent(
-            "chro", chro,
-            AgentInfo(id="chro", name="CHRO", role="chro", level=1)
-        )
+        company_instance.register_agent("chro", chro, AgentInfo(id="chro", name="CHRO", role="chro", level=1))
 
-        # 创建并注册COO
         coo = COO(company_instance)
-        company_instance.register_agent(
-            "coo", coo,
-            AgentInfo(id="coo", name="COO", role="coo", level=1)
-        )
+        company_instance.register_agent("coo", coo, AgentInfo(id="coo", name="COO", role="coo", level=1))
 
-        # 设置消息回调（用于WebSocket推送）
         async def on_message(message: Message):
             await broadcast_message(message)
-
         company_instance.bus.set_user_callback(on_message)
 
     return company_instance
@@ -62,10 +68,7 @@ def get_company() -> Company:
 
 async def broadcast_message(message: Message):
     """广播消息给所有WebSocket连接"""
-    data = {
-        "type": "message",
-        "data": message.to_dict()
-    }
+    data = {"type": "message", "data": message.to_dict()}
     for ws in websocket_connections:
         try:
             await ws.send_json(data)
@@ -110,6 +113,29 @@ async def index():
         .status { font-size: 0.9rem; color: #888; }
         .status .state { color: #4ecca3; font-weight: bold; }
 
+        /* Provider选择器 */
+        .provider-select {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+        .provider-select label {
+            font-size: 0.85rem;
+            color: #888;
+        }
+        .provider-select select {
+            padding: 0.4rem 0.8rem;
+            border: 1px solid #0f3460;
+            border-radius: 6px;
+            background: #0f3460;
+            color: #eee;
+            font-size: 0.85rem;
+            cursor: pointer;
+        }
+        .provider-select select:focus { outline: 2px solid #e94560; }
+        .provider-select select option { background: #16213e; }
+        .provider-select select option:disabled { color: #555; }
+
         .main-container {
             flex: 1;
             display: flex;
@@ -120,7 +146,6 @@ async def index():
             gap: 1rem;
         }
 
-        /* 左侧聊天区 */
         .chat-section {
             flex: 1;
             display: flex;
@@ -140,11 +165,7 @@ async def index():
             from { opacity: 0; transform: translateY(10px); }
             to { opacity: 1; transform: translateY(0); }
         }
-        .message .role {
-            font-size: 0.8rem;
-            font-weight: bold;
-            margin-bottom: 0.3rem;
-        }
+        .message .role { font-size: 0.8rem; font-weight: bold; margin-bottom: 0.3rem; }
         .message.user .role { color: #4ecca3; }
         .message.ceo .role { color: #e94560; }
         .message.system .role { color: #ffd700; }
@@ -206,7 +227,6 @@ async def index():
         }
         .actions button:hover { border-color: #e94560; color: #e94560; }
 
-        /* 右侧状态面板 */
         .status-panel {
             width: 300px;
             display: flex;
@@ -226,7 +246,6 @@ async def index():
             border-bottom: 1px solid #0f3460;
         }
 
-        /* 团队面板 */
         .team-member {
             display: flex;
             align-items: center;
@@ -251,7 +270,6 @@ async def index():
         .team-member .name { font-size: 0.85rem; flex: 1; }
         .team-member .task { font-size: 0.7rem; color: #888; }
 
-        /* 进度面板 */
         .progress-bar {
             height: 8px;
             background: #0f3460;
@@ -270,7 +288,6 @@ async def index():
             text-align: center;
         }
 
-        /* 任务列表 */
         .task-item {
             padding: 0.5rem;
             border-radius: 6px;
@@ -290,14 +307,20 @@ async def index():
         .task-item .task-status.in_progress { background: #ffd700; }
         .task-item .task-status.completed { background: #4ecca3; }
 
-        .typing::after {
-            content: '...';
-            animation: typing 1s infinite;
-        }
+        .typing::after { content: '...'; animation: typing 1s infinite; }
         @keyframes typing {
             0%, 20% { content: '.'; }
             40% { content: '..'; }
             60%, 100% { content: '...'; }
+        }
+
+        /* 当前Provider显示 */
+        .current-provider {
+            font-size: 0.75rem;
+            color: #4ecca3;
+            padding: 0.2rem 0.5rem;
+            background: #0f3460;
+            border-radius: 4px;
         }
     </style>
 </head>
@@ -305,6 +328,18 @@ async def index():
     <div class="header">
         <h1>AI Company v0.1</h1>
         <div class="header-right">
+            <div class="provider-select">
+                <label>模型:</label>
+                <select id="provider-select" onchange="changeProvider()">
+                    <option value="openai">OpenAI (GPT-4)</option>
+                    <option value="claude">Claude</option>
+                    <option value="gemini">Gemini</option>
+                    <option value="grok">Grok</option>
+                    <option value="qwen">Qwen (通义)</option>
+                    <option value="local">本地 (Ollama)</option>
+                </select>
+                <span class="current-provider" id="current-provider">-</span>
+            </div>
             <div class="status">状态: <span class="state" id="state">等待中</span></div>
         </div>
     </div>
@@ -343,16 +378,6 @@ async def index():
                         <span class="name">CEO</span>
                         <span class="task">待命</span>
                     </div>
-                    <div class="team-member">
-                        <span class="dot idle"></span>
-                        <span class="name">CHRO</span>
-                        <span class="task">待命</span>
-                    </div>
-                    <div class="team-member">
-                        <span class="dot idle"></span>
-                        <span class="name">COO</span>
-                        <span class="task">待命</span>
-                    </div>
                 </div>
             </div>
 
@@ -382,26 +407,20 @@ async def index():
         const progressFillEl = document.getElementById('progress-fill');
         const progressTextEl = document.getElementById('progress-text');
         const taskListEl = document.getElementById('task-list');
+        const providerSelect = document.getElementById('provider-select');
+        const currentProviderEl = document.getElementById('current-provider');
 
         let ws = null;
 
-        // 连接WebSocket
         function connectWebSocket() {
             const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
             ws = new WebSocket(`${protocol}//${window.location.host}/ws`);
-
             ws.onmessage = (event) => {
                 const data = JSON.parse(event.data);
-                if (data.type === 'message') {
-                    handleSystemMessage(data.data);
-                } else if (data.type === 'status') {
-                    updateStatusPanel(data.data);
-                }
+                if (data.type === 'message') handleSystemMessage(data.data);
+                else if (data.type === 'status') updateStatusPanel(data.data);
             };
-
-            ws.onclose = () => {
-                setTimeout(connectWebSocket, 3000);
-            };
+            ws.onclose = () => setTimeout(connectWebSocket, 3000);
         }
 
         function handleSystemMessage(msg) {
@@ -446,7 +465,6 @@ async def index():
                     assistantMsg.querySelector('.content').textContent = fullContent;
                     messagesEl.scrollTop = messagesEl.scrollHeight;
                 }
-
                 updateStatus();
             } catch (error) {
                 assistantMsg.querySelector('.content').textContent = '出错了: ' + error.message;
@@ -490,13 +508,10 @@ async def index():
                 const response = await fetch('/api/status');
                 const data = await response.json();
                 updateStatusPanel(data);
-            } catch (e) {
-                console.error(e);
-            }
+            } catch (e) { console.error(e); }
         }
 
         function updateStatusPanel(data) {
-            // 更新状态
             const stateMap = {
                 'idle': '等待中',
                 'exploring': '需求探索中',
@@ -506,7 +521,12 @@ async def index():
             };
             stateEl.textContent = stateMap[data.ceo_state] || data.ceo_state || '等待中';
 
-            // 更新团队列表
+            // 更新当前provider显示
+            if (data.current_provider) {
+                currentProviderEl.textContent = data.current_provider;
+                providerSelect.value = data.current_provider;
+            }
+
             if (data.agents) {
                 teamListEl.innerHTML = data.agents.map(agent => `
                     <div class="team-member">
@@ -517,13 +537,11 @@ async def index():
                 `).join('');
             }
 
-            // 更新进度
             if (data.progress) {
                 const percent = data.progress.progress_percent || 0;
                 progressFillEl.style.width = percent + '%';
                 progressTextEl.textContent = `${data.progress.completed || 0}/${data.progress.total_tasks || 0} 完成`;
 
-                // 更新任务列表
                 if (data.progress.tasks && data.progress.tasks.length > 0) {
                     taskListEl.innerHTML = data.progress.tasks.map(task => `
                         <div class="task-item ${task.status}">
@@ -537,9 +555,46 @@ async def index():
             }
         }
 
-        async function resetChat() {
-            if (!confirm('确定要重新开始吗？')) return;
-            await fetch('/api/reset', { method: 'POST' });
+        async function loadProviders() {
+            try {
+                const response = await fetch('/api/providers');
+                const providers = await response.json();
+
+                providerSelect.innerHTML = providers.map(p =>
+                    `<option value="${p.name}" ${!p.has_key ? 'disabled' : ''}>${p.name.toUpperCase()}${!p.has_key ? ' (无Key)' : ''}</option>`
+                ).join('');
+
+                // 选中当前provider
+                const statusResp = await fetch('/api/status');
+                const status = await statusResp.json();
+                if (status.current_provider) {
+                    providerSelect.value = status.current_provider;
+                    currentProviderEl.textContent = status.current_provider;
+                }
+            } catch (e) { console.error(e); }
+        }
+
+        async function changeProvider() {
+            const provider = providerSelect.value;
+            if (!confirm(`切换到 ${provider.toUpperCase()} 将重置当前对话，确定吗？`)) {
+                updateStatus();
+                return;
+            }
+
+            try {
+                await fetch('/api/provider', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ provider })
+                });
+                currentProviderEl.textContent = provider;
+                resetChatUI();
+            } catch (e) {
+                alert('切换失败: ' + e.message);
+            }
+        }
+
+        function resetChatUI() {
             messagesEl.innerHTML = `
                 <div class="message ceo">
                     <div class="role">CEO</div>
@@ -553,12 +608,17 @@ async def index():
             updateStatus();
         }
 
+        async function resetChat() {
+            if (!confirm('确定要重新开始吗？')) return;
+            await fetch('/api/reset', { method: 'POST' });
+            resetChatUI();
+        }
+
         // 初始化
         connectWebSocket();
+        loadProviders();
         updateStatus();
         inputEl.focus();
-
-        // 定期更新状态
         setInterval(updateStatus, 5000);
     </script>
 </body>
@@ -569,7 +629,6 @@ async def index():
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
-    """WebSocket连接，用于实时推送消息"""
     await websocket.accept()
     websocket_connections.append(websocket)
     try:
@@ -579,9 +638,32 @@ async def websocket_endpoint(websocket: WebSocket):
         websocket_connections.remove(websocket)
 
 
+@app.get("/api/providers")
+async def list_providers():
+    """获取所有可用的Provider"""
+    return get_available_providers()
+
+
+@app.post("/api/provider")
+async def set_provider(request: dict):
+    """切换Provider"""
+    global company_instance, current_provider
+    provider = request.get("provider", "openai")
+
+    # 重置公司实例
+    company_instance = None
+    current_provider = provider
+
+    # 尝试创建新实例
+    try:
+        get_company(provider)
+        return {"status": "ok", "provider": provider}
+    except ValueError as e:
+        return {"status": "error", "message": str(e)}
+
+
 @app.post("/api/chat")
 async def chat(request: ChatRequest):
-    """普通对话"""
     company = get_company()
     ceo = company.get_agent("ceo")
     response = await ceo.chat(request.message)
@@ -590,7 +672,6 @@ async def chat(request: ChatRequest):
 
 @app.post("/api/chat/stream")
 async def chat_stream(request: ChatRequest):
-    """流式对话"""
     company = get_company()
     ceo = company.get_agent("ceo")
 
@@ -603,7 +684,6 @@ async def chat_stream(request: ChatRequest):
 
 @app.get("/api/state")
 async def get_state():
-    """获取CEO状态（兼容旧接口）"""
     company = get_company()
     ceo = company.get_agent("ceo")
     return ceo.get_state()
@@ -611,13 +691,13 @@ async def get_state():
 
 @app.get("/api/status")
 async def get_status():
-    """获取公司完整状态"""
     company = get_company()
     ceo = company.get_agent("ceo")
     coo = company.get_agent("coo")
 
     return {
         "ceo_state": ceo.state,
+        "current_provider": current_provider,
         "agents": [
             {
                 "id": info.id,
@@ -635,11 +715,8 @@ async def get_status():
 
 @app.post("/api/command")
 async def send_command(request: dict):
-    """发送用户命令"""
     company = get_company()
     command = request.get("command", "")
-
-    # 创建用户消息
     message = Message(
         content=command,
         from_agent="user",
@@ -647,13 +724,11 @@ async def send_command(request: dict):
         msg_type="user_command"
     )
     await company.bus.publish(message)
-
     return {"status": "ok"}
 
 
 @app.post("/api/reset")
 async def reset():
-    """重置公司"""
     global company_instance
     company_instance = None
     websocket_connections.clear()

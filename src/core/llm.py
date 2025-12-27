@@ -2,6 +2,7 @@
 import os
 from abc import ABC, abstractmethod
 from typing import AsyncGenerator, Optional
+from pathlib import Path
 import yaml
 
 
@@ -19,8 +20,8 @@ class LLMProvider(ABC):
         pass
 
 
-class OpenAIProvider(LLMProvider):
-    """OpenAI兼容接口（支持OpenAI、Azure、本地Ollama等）"""
+class OpenAICompatibleProvider(LLMProvider):
+    """OpenAI兼容接口（支持OpenAI、Grok、Qwen、本地Ollama等）"""
 
     def __init__(self, api_key: str, base_url: str, model: str):
         from openai import AsyncOpenAI
@@ -56,7 +57,6 @@ class ClaudeProvider(LLMProvider):
         self.model = model
 
     async def chat(self, messages: list[dict], **kwargs) -> str:
-        # 转换消息格式（OpenAI格式 -> Claude格式）
         system = None
         claude_messages = []
         for msg in messages:
@@ -73,7 +73,6 @@ class ClaudeProvider(LLMProvider):
             max_tokens=4096,
             system=system or "",
             messages=claude_messages,
-            **kwargs
         )
         return response.content[0].text
 
@@ -94,7 +93,6 @@ class ClaudeProvider(LLMProvider):
             max_tokens=4096,
             system=system or "",
             messages=claude_messages,
-            **kwargs
         ) as stream:
             async for text in stream.text_stream:
                 yield text
@@ -110,7 +108,7 @@ class GeminiProvider(LLMProvider):
         self.model_name = model
 
     def _convert_messages(self, messages: list[dict]) -> tuple[str, list[dict]]:
-        """转换消息格式（OpenAI格式 -> Gemini格式）"""
+        """转换消息格式"""
         system = None
         gemini_messages = []
 
@@ -135,7 +133,6 @@ class GeminiProvider(LLMProvider):
 
         system, gemini_messages = self._convert_messages(messages)
 
-        # 如果有system prompt，创建带system instruction的模型
         if system:
             model = genai.GenerativeModel(self.model_name, system_instruction=system)
         else:
@@ -172,39 +169,146 @@ class GeminiProvider(LLMProvider):
                 yield chunk.text
 
 
+# Provider配置映射
+PROVIDER_CONFIGS = {
+    "openai": {
+        "env_key": "OPENAI_API_KEY",
+        "base_url": "https://api.openai.com/v1",
+        "default_model": "gpt-4",
+        "type": "openai_compatible"
+    },
+    "claude": {
+        "env_key": "ANTHROPIC_API_KEY",
+        "default_model": "claude-3-opus-20240229",
+        "type": "claude"
+    },
+    "gemini": {
+        "env_key": ["GEMINI_API_KEY", "GOOGLE_API_KEY"],
+        "default_model": "gemini-1.5-pro",
+        "type": "gemini"
+    },
+    "grok": {
+        "env_key": "XAI_API_KEY",
+        "base_url": "https://api.x.ai/v1",
+        "default_model": "grok-beta",
+        "type": "openai_compatible"
+    },
+    "qwen": {
+        "env_key": "DASHSCOPE_API_KEY",
+        "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        "default_model": "qwen-plus",
+        "type": "openai_compatible"
+    },
+    "local": {
+        "env_key": None,  # 本地不需要key
+        "base_url": "http://localhost:11434/v1",
+        "default_model": "llama2",
+        "type": "openai_compatible"
+    },
+    "ollama": {
+        "env_key": None,
+        "base_url": "http://localhost:11434/v1",
+        "default_model": "llama2",
+        "type": "openai_compatible"
+    }
+}
+
+
 def load_config(config_path: str = "config/llm.yaml") -> dict:
     """加载配置文件"""
-    with open(config_path, "r") as f:
-        return yaml.safe_load(f)
+    # 尝试多个可能的路径
+    paths_to_try = [
+        config_path,
+        Path(__file__).parent.parent.parent / "config" / "llm.yaml",
+        "config/llm.yaml"
+    ]
+
+    for path in paths_to_try:
+        try:
+            with open(path, "r") as f:
+                return yaml.safe_load(f)
+        except FileNotFoundError:
+            continue
+
+    # 返回默认配置
+    return {"default_provider": "openai", "providers": {}}
+
+
+def get_api_key(provider_name: str) -> Optional[str]:
+    """获取API Key"""
+    config = PROVIDER_CONFIGS.get(provider_name, {})
+    env_keys = config.get("env_key")
+
+    if env_keys is None:
+        return "not-needed"  # 本地模型不需要key
+
+    if isinstance(env_keys, list):
+        for key in env_keys:
+            value = os.getenv(key)
+            if value:
+                return value
+        return None
+
+    return os.getenv(env_keys)
+
+
+def get_available_providers() -> list[dict]:
+    """获取所有可用的Provider（已配置API Key的）"""
+    available = []
+    for name, config in PROVIDER_CONFIGS.items():
+        api_key = get_api_key(name)
+        available.append({
+            "name": name,
+            "has_key": api_key is not None,
+            "default_model": config.get("default_model"),
+            "type": config.get("type")
+        })
+    return available
 
 
 def create_llm_provider(provider_name: Optional[str] = None, config_path: str = "config/llm.yaml") -> LLMProvider:
-    """创建LLM Provider"""
+    """创建LLM Provider
+
+    Args:
+        provider_name: 指定provider名称，如果为None则使用配置文件中的默认值
+        config_path: 配置文件路径
+
+    Returns:
+        LLMProvider实例
+
+    Raises:
+        ValueError: 如果缺少API Key
+    """
     config = load_config(config_path)
     provider_name = provider_name or config.get("default_provider", "openai")
-    provider_config = config["providers"].get(provider_name, {})
+    provider_config = config.get("providers", {}).get(provider_name, {})
 
-    if provider_name == "claude":
-        api_key = os.getenv("ANTHROPIC_API_KEY")
-        if not api_key:
-            raise ValueError("请设置 ANTHROPIC_API_KEY 环境变量")
-        return ClaudeProvider(
-            api_key=api_key,
-            model=provider_config.get("model", "claude-3-opus-20240229")
-        )
-    elif provider_name == "gemini":
-        api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
-        if not api_key:
-            raise ValueError("请设置 GEMINI_API_KEY 或 GOOGLE_API_KEY 环境变量")
-        return GeminiProvider(
-            api_key=api_key,
-            model=provider_config.get("model", "gemini-1.5-pro")
-        )
+    # 获取provider的默认配置
+    default_config = PROVIDER_CONFIGS.get(provider_name, PROVIDER_CONFIGS["openai"])
+
+    # 获取API Key
+    api_key = get_api_key(provider_name)
+    if api_key is None:
+        env_key = default_config.get("env_key")
+        if isinstance(env_key, list):
+            env_key = " 或 ".join(env_key)
+        raise ValueError(f"请设置 {env_key} 环境变量")
+
+    # 获取配置参数
+    base_url = provider_config.get("base_url", default_config.get("base_url"))
+    model = provider_config.get("model", default_config.get("default_model"))
+
+    # 根据类型创建Provider
+    provider_type = default_config.get("type", "openai_compatible")
+
+    if provider_type == "claude":
+        return ClaudeProvider(api_key=api_key, model=model)
+    elif provider_type == "gemini":
+        return GeminiProvider(api_key=api_key, model=model)
     else:
-        # OpenAI或兼容接口
-        api_key = os.getenv("OPENAI_API_KEY", "not-needed")  # 本地模型可能不需要
-        return OpenAIProvider(
+        # OpenAI兼容接口
+        return OpenAICompatibleProvider(
             api_key=api_key,
-            base_url=provider_config.get("base_url", "https://api.openai.com/v1"),
-            model=provider_config.get("model", "gpt-4")
+            base_url=base_url,
+            model=model
         )
