@@ -346,11 +346,13 @@ def _get_openai_model_desc(model_id: str) -> str:
 def _list_claude_models() -> list[dict]:
     """获取Claude可用模型 (Anthropic没有list API，使用预定义列表)"""
     return [
-        {"id": "claude-sonnet-4-20250514", "name": "Claude Sonnet 4", "description": "最新最强"},
-        {"id": "claude-3-5-sonnet-20241022", "name": "Claude 3.5 Sonnet", "description": "推荐 - 性价比最高"},
-        {"id": "claude-3-opus-20240229", "name": "Claude 3 Opus", "description": "最强推理"},
-        {"id": "claude-3-sonnet-20240229", "name": "Claude 3 Sonnet", "description": "平衡性能"},
-        {"id": "claude-3-haiku-20240307", "name": "Claude 3 Haiku", "description": "快速便宜"},
+        {"id": "claude-opus-4-20250514", "name": "Claude Opus 4", "description": "最新最强 - 复杂推理"},
+        {"id": "claude-sonnet-4-20250514", "name": "Claude Sonnet 4", "description": "最新 - 平衡性能"},
+        {"id": "claude-3-5-sonnet-20241022", "name": "Claude 3.5 Sonnet", "description": "推荐 - 性价比高"},
+        {"id": "claude-3-5-haiku-20241022", "name": "Claude 3.5 Haiku", "description": "快速便宜"},
+        {"id": "claude-3-opus-20240229", "name": "Claude 3 Opus", "description": "旧版最强"},
+        {"id": "claude-3-sonnet-20240229", "name": "Claude 3 Sonnet", "description": "旧版平衡"},
+        {"id": "claude-3-haiku-20240307", "name": "Claude 3 Haiku", "description": "旧版快速"},
     ]
 
 
