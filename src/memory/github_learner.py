@@ -24,6 +24,7 @@ class RepoInfo:
     url: str
     name: str
     local_path: Path
+    branch: Optional[str] = None
     language: Optional[str] = None
     description: str = ""
 
@@ -124,6 +125,7 @@ class GitHubLearner:
     async def learn_from_url(
         self,
         repo_url: str,
+        branch: Optional[str] = None,
         max_code_files: int = 10,
         max_file_size: int = 30000,
         cleanup: bool = True
@@ -132,6 +134,7 @@ class GitHubLearner:
 
         Args:
             repo_url: GitHub 仓库 URL
+            branch: 指定分支（可选，不填则使用默认分支）
             max_code_files: 分析的核心代码文件数
             max_file_size: 最大文件大小
             cleanup: 学习后是否删除本地仓库
@@ -139,10 +142,11 @@ class GitHubLearner:
         Returns:
             学习结果统计
         """
-        print(f"开始学习仓库: {repo_url}")
+        branch_info = f" (分支: {branch})" if branch else ""
+        print(f"开始学习仓库: {repo_url}{branch_info}")
 
         # Clone 仓库
-        repo_info = self._clone_repo(repo_url)
+        repo_info = self._clone_repo(repo_url, branch)
         if not repo_info:
             return {"error": "Clone 失败"}
 
@@ -155,8 +159,13 @@ class GitHubLearner:
             if cleanup:
                 self._cleanup(repo_info)
 
-    def _clone_repo(self, repo_url: str) -> Optional[RepoInfo]:
-        """Clone 仓库"""
+    def _clone_repo(self, repo_url: str, branch: Optional[str] = None) -> Optional[RepoInfo]:
+        """Clone 仓库
+
+        Args:
+            repo_url: GitHub 仓库 URL
+            branch: 指定分支（可选）
+        """
         # 从 URL 提取仓库名
         repo_name = repo_url.rstrip("/").split("/")[-1]
         if repo_name.endswith(".git"):
@@ -170,9 +179,17 @@ class GitHubLearner:
 
         # Clone
         try:
-            print(f"Cloning {repo_url}...")
+            # 构建 git clone 命令
+            cmd = ["git", "clone", "--depth", "1"]
+            if branch:
+                cmd.extend(["--branch", branch])
+            cmd.extend([repo_url, str(local_path)])
+
+            branch_info = f" (分支: {branch})" if branch else ""
+            print(f"Cloning {repo_url}{branch_info}...")
+
             result = subprocess.run(
-                ["git", "clone", "--depth", "1", repo_url, str(local_path)],
+                cmd,
                 capture_output=True,
                 text=True,
                 timeout=120
@@ -185,7 +202,8 @@ class GitHubLearner:
             return RepoInfo(
                 url=repo_url,
                 name=repo_name,
-                local_path=local_path
+                local_path=local_path,
+                branch=branch
             )
 
         except subprocess.TimeoutExpired:

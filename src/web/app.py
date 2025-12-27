@@ -1078,6 +1078,8 @@ async def god_layer_page():
                 </p>
                 <input type="text" id="github-url" placeholder="https://github.com/user/repo">
                 <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 10px;">
+                    <label style="color: #888; font-size: 0.85em; white-space: nowrap;">分支:</label>
+                    <input type="text" id="github-branch" placeholder="默认分支" style="width: 120px;">
                     <label style="color: #888; font-size: 0.85em; white-space: nowrap;">分析文件数:</label>
                     <input type="number" id="max-files" value="10" min="1" max="30" style="width: 80px;">
                 </div>
@@ -1250,6 +1252,7 @@ async def god_layer_page():
         // GitHub 学习
         async function learnFromGithub() {
             const url = document.getElementById('github-url').value;
+            const branch = document.getElementById('github-branch').value.trim();
             const maxFiles = document.getElementById('max-files').value;
             const statusEl = document.getElementById('learn-status');
             const btn = document.getElementById('learn-btn');
@@ -1263,13 +1266,17 @@ async def god_layer_page():
             btn.disabled = true;
             btn.textContent = 'AI 分析中...';
             statusEl.className = 'status loading';
-            statusEl.textContent = '正在 Clone 仓库并用 AI 分析代码，这可能需要 1-2 分钟...';
+            const branchInfo = branch ? ` (分支: ${branch})` : '';
+            statusEl.textContent = `正在 Clone 仓库${branchInfo}并用 AI 分析代码，这可能需要 1-2 分钟...`;
 
             try {
+                const requestBody = { url, max_files: parseInt(maxFiles) };
+                if (branch) requestBody.branch = branch;
+
                 const resp = await fetch('/api/knowledge/learn-github', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ url, max_files: parseInt(maxFiles) })
+                    body: JSON.stringify(requestBody)
                 });
                 const data = await resp.json();
 
@@ -1873,6 +1880,7 @@ async def learn_from_github_api(request: dict):
         # 学习仓库 (async)
         result = await learner.learn_from_url(
             repo_url,
+            branch=request.get("branch"),  # 可选分支
             max_code_files=request.get("max_files", 10),
             cleanup=True
         )
