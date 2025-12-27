@@ -173,6 +173,34 @@ EXPERT_PROFILES: dict[ExpertPersona, ExpertProfile] = {
         keywords=["故事", "叙事", "情感", "共鸣", "表达", "沟通"],
         thinking_style="用故事建立情感连接，传递核心信息"
     ),
+    ExpertPersona.DEVOPS: ExpertProfile(
+        persona=ExpertPersona.DEVOPS,
+        display_name="DevOps工程师",
+        description="部署、运维与自动化",
+        keywords=["部署", "运维", "CI/CD", "容器", "Docker", "K8s", "自动化", "监控"],
+        thinking_style="自动化一切，确保系统稳定可靠，快速交付"
+    ),
+    ExpertPersona.LEGAL_EXPERT: ExpertProfile(
+        persona=ExpertPersona.LEGAL_EXPERT,
+        display_name="法律专家",
+        description="法规合规与风险防范",
+        keywords=["法律", "合规", "合同", "隐私", "知识产权", "风险", "条款"],
+        thinking_style="识别法律风险，确保合规运营，保护权益"
+    ),
+    ExpertPersona.DOMAIN_EXPERT: ExpertProfile(
+        persona=ExpertPersona.DOMAIN_EXPERT,
+        display_name="领域专家",
+        description="特定行业深度知识",
+        keywords=["行业", "专业", "领域", "经验", "实践", "案例"],
+        thinking_style="应用行业最佳实践，提供专业见解"
+    ),
+    ExpertPersona.CREATIVE_DIRECTOR: ExpertProfile(
+        persona=ExpertPersona.CREATIVE_DIRECTOR,
+        display_name="创意总监",
+        description="创意策划与品牌调性",
+        keywords=["创意", "策划", "品牌", "调性", "概念", "灵感", "创新"],
+        thinking_style="统筹创意方向，确保品牌一致性，激发创新"
+    ),
 }
 
 
