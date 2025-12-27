@@ -22,13 +22,17 @@ app = FastAPI(title="AI Company", version="0.1.0")
 
 # 全局状态
 company_instance: Optional[Company] = None
-current_provider: str = "openai"
+current_provider: Optional[str] = None  # 不预设默认，让用户选择
 websocket_connections: list[WebSocket] = []
 
 
-def get_company(provider_name: Optional[str] = None) -> Company:
+def get_company(provider_name: Optional[str] = None) -> Optional[Company]:
     """获取或创建公司实例"""
     global company_instance, current_provider
+
+    # 如果还没选择provider，返回None
+    if provider_name is None and current_provider is None:
+        return None
 
     # 如果provider变了，重新创建
     if provider_name and provider_name != current_provider:
@@ -36,18 +40,10 @@ def get_company(provider_name: Optional[str] = None) -> Company:
         current_provider = provider_name
 
     if company_instance is None:
-        try:
-            llm = create_llm_provider(current_provider)
-        except ValueError as e:
-            # 如果当前provider没有key，尝试找一个有key的
-            providers = get_available_providers()
-            for p in providers:
-                if p["has_key"]:
-                    current_provider = p["name"]
-                    llm = create_llm_provider(current_provider)
-                    break
-            else:
-                raise ValueError("没有可用的LLM Provider，请设置API Key")
+        if current_provider is None:
+            raise ValueError("请先选择一个LLM Provider")
+
+        llm = create_llm_provider(current_provider)
 
         company_instance = Company(llm=llm)
         company_instance.memory = LocalMemoryStore()
@@ -325,9 +321,84 @@ async def index():
             background: #0f3460;
             border-radius: 4px;
         }
+
+        /* Provider选择界面 */
+        .provider-selection-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.9);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+        }
+        .provider-selection-overlay.hidden { display: none; }
+        .provider-selection-box {
+            background: #16213e;
+            border-radius: 16px;
+            padding: 2rem;
+            max-width: 500px;
+            width: 90%;
+            text-align: center;
+        }
+        .provider-selection-box h2 {
+            color: #e94560;
+            margin-bottom: 0.5rem;
+        }
+        .provider-selection-box p {
+            color: #888;
+            margin-bottom: 1.5rem;
+            font-size: 0.9rem;
+        }
+        .provider-list {
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+        }
+        .provider-btn {
+            padding: 1rem;
+            border: 2px solid #0f3460;
+            border-radius: 10px;
+            background: #0f3460;
+            color: #eee;
+            font-size: 1rem;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .provider-btn:hover:not(:disabled) {
+            border-color: #e94560;
+            background: #1a1a3e;
+        }
+        .provider-btn:disabled {
+            opacity: 0.4;
+            cursor: not-allowed;
+        }
+        .provider-btn .provider-name { font-weight: bold; }
+        .provider-btn .provider-status {
+            font-size: 0.8rem;
+            color: #4ecca3;
+        }
+        .provider-btn:disabled .provider-status { color: #888; }
     </style>
 </head>
 <body>
+    <!-- Provider选择界面 -->
+    <div class="provider-selection-overlay" id="provider-overlay">
+        <div class="provider-selection-box">
+            <h2>AI Company v0.1</h2>
+            <p>选择一个 LLM Provider 开始使用</p>
+            <div class="provider-list" id="provider-list">
+                <!-- 动态加载 -->
+            </div>
+        </div>
+    </div>
+
     <div class="header">
         <h1>AI Company v0.1</h1>
         <div class="header-right">
@@ -412,8 +483,11 @@ async def index():
         const taskListEl = document.getElementById('task-list');
         const providerSelect = document.getElementById('provider-select');
         const currentProviderEl = document.getElementById('current-provider');
+        const providerOverlay = document.getElementById('provider-overlay');
+        const providerListEl = document.getElementById('provider-list');
 
         let ws = null;
+        let providerSelected = false;
 
         function connectWebSocket() {
             const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -563,18 +637,68 @@ async def index():
                 const response = await fetch('/api/providers');
                 const providers = await response.json();
 
+                // 更新header中的下拉选择
                 providerSelect.innerHTML = providers.map(p =>
                     `<option value="${p.name}" ${!p.has_key ? 'disabled' : ''}>${p.name.toUpperCase()}${!p.has_key ? ' (无Key)' : ''}</option>`
                 ).join('');
 
-                // 选中当前provider
+                // 更新初始选择界面
+                const providerNames = {
+                    'openai': 'OpenAI (GPT-4)',
+                    'claude': 'Claude (Anthropic)',
+                    'gemini': 'Gemini (Google)',
+                    'grok': 'Grok (xAI)',
+                    'qwen': 'Qwen (通义千问)',
+                    'local': '本地 (Ollama)',
+                    'ollama': '本地 (Ollama)'
+                };
+
+                providerListEl.innerHTML = providers.map(p =>
+                    `<button class="provider-btn" ${!p.has_key ? 'disabled' : ''} onclick="selectInitialProvider('${p.name}')">
+                        <span class="provider-name">${providerNames[p.name] || p.name.toUpperCase()}</span>
+                        <span class="provider-status">${p.has_key ? '可用' : '未配置 API Key'}</span>
+                    </button>`
+                ).join('');
+
+                // 检查是否已选择provider
                 const statusResp = await fetch('/api/status');
                 const status = await statusResp.json();
-                if (status.current_provider) {
-                    providerSelect.value = status.current_provider;
-                    currentProviderEl.textContent = status.current_provider;
+
+                if (status.need_provider_selection) {
+                    providerOverlay.classList.remove('hidden');
+                    providerSelected = false;
+                } else {
+                    providerOverlay.classList.add('hidden');
+                    providerSelected = true;
+                    if (status.current_provider) {
+                        providerSelect.value = status.current_provider;
+                        currentProviderEl.textContent = status.current_provider;
+                    }
                 }
             } catch (e) { console.error(e); }
+        }
+
+        async function selectInitialProvider(provider) {
+            try {
+                const resp = await fetch('/api/provider', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ provider })
+                });
+                const result = await resp.json();
+
+                if (result.status === 'ok') {
+                    providerOverlay.classList.add('hidden');
+                    providerSelected = true;
+                    currentProviderEl.textContent = provider;
+                    providerSelect.value = provider;
+                    resetChatUI();
+                } else {
+                    alert('选择失败: ' + result.message);
+                }
+            } catch (e) {
+                alert('选择失败: ' + e.message);
+            }
         }
 
         async function changeProvider() {
@@ -676,6 +800,11 @@ async def chat(request: ChatRequest):
 @app.post("/api/chat/stream")
 async def chat_stream(request: ChatRequest):
     company = get_company()
+    if company is None:
+        async def error_gen():
+            yield "请先选择一个LLM Provider"
+        return StreamingResponse(error_gen(), media_type="text/plain")
+
     ceo = company.get_agent("ceo")
 
     async def generate():
@@ -695,12 +824,25 @@ async def get_state():
 @app.get("/api/status")
 async def get_status():
     company = get_company()
+
+    # 如果还没选择provider
+    if company is None:
+        return {
+            "ceo_state": None,
+            "current_provider": None,
+            "need_provider_selection": True,
+            "agents": [],
+            "progress": None,
+            "project": None
+        }
+
     ceo = company.get_agent("ceo")
     coo = company.get_agent("coo")
 
     return {
         "ceo_state": ceo.state,
         "current_provider": current_provider,
+        "need_provider_selection": False,
         "agents": [
             {
                 "id": info.id,
