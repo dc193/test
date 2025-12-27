@@ -344,16 +344,68 @@ def _get_openai_model_desc(model_id: str) -> str:
 
 
 def _list_claude_models() -> list[dict]:
-    """获取Claude可用模型 (Anthropic没有list API，使用预定义列表)"""
+    """获取Claude可用模型 - 从Anthropic API动态获取"""
+    api_key = get_api_key("claude")
+    if not api_key:
+        return []
+
+    try:
+        import requests
+        resp = requests.get(
+            "https://api.anthropic.com/v1/models",
+            headers={
+                "x-api-key": api_key,
+                "anthropic-version": "2023-06-01"
+            },
+            timeout=10
+        )
+
+        if resp.status_code == 200:
+            data = resp.json()
+            models = []
+            for m in data.get("data", []):
+                model_id = m.get("id", "")
+                display_name = m.get("display_name", model_id)
+                # 根据模型名生成描述
+                desc = _get_claude_model_desc(model_id)
+                models.append({
+                    "id": model_id,
+                    "name": display_name,
+                    "description": desc
+                })
+            # 按模型ID排序，新版本在前
+            models.sort(key=lambda x: x["id"], reverse=True)
+            return models
+
+    except Exception as e:
+        print(f"获取Claude模型列表失败: {e}")
+
+    # API失败时返回默认列表
     return [
-        {"id": "claude-opus-4-20250514", "name": "Claude Opus 4", "description": "最新最强 - 复杂推理"},
-        {"id": "claude-sonnet-4-20250514", "name": "Claude Sonnet 4", "description": "最新 - 平衡性能"},
-        {"id": "claude-3-5-sonnet-20241022", "name": "Claude 3.5 Sonnet", "description": "推荐 - 性价比高"},
-        {"id": "claude-3-5-haiku-20241022", "name": "Claude 3.5 Haiku", "description": "快速便宜"},
-        {"id": "claude-3-opus-20240229", "name": "Claude 3 Opus", "description": "旧版最强"},
-        {"id": "claude-3-sonnet-20240229", "name": "Claude 3 Sonnet", "description": "旧版平衡"},
-        {"id": "claude-3-haiku-20240307", "name": "Claude 3 Haiku", "description": "旧版快速"},
+        {"id": "claude-opus-4-20250514", "name": "Claude Opus 4", "description": "最新最强"},
+        {"id": "claude-sonnet-4-20250514", "name": "Claude Sonnet 4", "description": "最新平衡"},
+        {"id": "claude-3-5-sonnet-20241022", "name": "Claude 3.5 Sonnet", "description": "推荐"},
+        {"id": "claude-3-5-haiku-20241022", "name": "Claude 3.5 Haiku", "description": "快速"},
     ]
+
+
+def _get_claude_model_desc(model_id: str) -> str:
+    """根据模型ID生成描述"""
+    if "opus-4" in model_id:
+        return "最新最强 - 复杂推理"
+    elif "sonnet-4" in model_id:
+        return "最新 - 平衡性能"
+    elif "3-5-sonnet" in model_id:
+        return "推荐 - 性价比高"
+    elif "3-5-haiku" in model_id:
+        return "快速便宜"
+    elif "opus" in model_id:
+        return "强大推理"
+    elif "sonnet" in model_id:
+        return "平衡性能"
+    elif "haiku" in model_id:
+        return "快速便宜"
+    return ""
 
 
 def _list_gemini_models(api_key: str) -> list[dict]:
