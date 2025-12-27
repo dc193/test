@@ -4,13 +4,15 @@
 - 从网页文章学习（多页爬取、JS 渲染）
 - 从 PDF 学习
 - 从文字/想法学习（AI 提炼）
+- 自动识别专家角色（personas）
 """
 import re
 from typing import Optional, TYPE_CHECKING
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from .knowledge_base import KnowledgeBase, KnowledgeType
 from .web_scraper import WebScraper, ScrapedContent
+from .expert_system import ExpertMatcher, ExpertPersona, EXPERT_PROFILES
 
 if TYPE_CHECKING:
     from ..core.llm import LLMProvider
@@ -28,6 +30,9 @@ class LearningResult:
     # 抓取信息
     pages_scraped: int = 0
     content_length: int = 0
+    # 专家角色
+    personas: list[str] = field(default_factory=list)
+    perspective: str = ""
 
     def to_dict(self) -> dict:
         return {
@@ -38,9 +43,31 @@ class LearningResult:
             "knowledge_id": self.knowledge_id,
             "error": self.error,
             "pages_scraped": self.pages_scraped,
-            "content_length": self.content_length
+            "content_length": self.content_length,
+            "personas": self.personas,
+            "perspective": self.perspective
         }
 
+
+# 可用的专家角色列表
+EXPERT_PERSONAS_LIST = """
+- philosopher: 哲学家 - 追问本质，探索第一性原理
+- strategist: 战略家 - 着眼全局，规划长远
+- systems_thinker: 系统思考者 - 理解复杂系统的反馈与涌现
+- psychologist: 心理学家 - 理解人类行为与动机
+- behavioral_economist: 行为经济学家 - 研究决策偏见与非理性
+- ux_designer: UX设计师 - 优化用户体验与交互
+- growth_hacker: 增长黑客 - 驱动用户增长与留存
+- product_manager: 产品经理 - 定义产品方向与优先级
+- entrepreneur: 创业者 - 商业模式与风险把控
+- marketer: 营销专家 - 品牌建设与市场传播
+- software_architect: 软件架构师 - 系统设计与技术决策
+- engineer: 工程师 - 高质量代码实现
+- data_scientist: 数据科学家 - 数据分析与机器学习
+- finance_expert: 金融专家 - 财务分析与投资决策
+- designer: 设计师 - 视觉与美学
+- storyteller: 故事讲述者 - 叙事与情感连接
+"""
 
 # 文章分析 prompt
 ARTICLE_ANALYSIS_PROMPT = """你是一位善于提炼知识的专家。请深度分析以下文章内容，提炼出有价值的知识和洞察。
@@ -78,6 +105,15 @@ ARTICLE_ANALYSIS_PROMPT = """你是一位善于提炼知识的专家。请深度
 1. 改变什么认知？
 2. 采取什么行动？
 3. 避免什么误区？
+
+## 六、专家视角标注
+这篇文章的知识最适合哪些专家角色的视角？请从以下列表中选择 1-3 个最匹配的：
+{personas_list}
+
+请以 JSON 格式输出：
+```json
+{{"personas": ["角色ID1", "角色ID2"], "perspective": "一句话描述这个知识的视角/切入点"}}
+```
 
 ---
 请直接输出分析结果，内容要有深度和实用性。"""
@@ -139,12 +175,26 @@ IDEA_EXTRACTION_PROMPT = """你是一位善于提炼知识的专家。请分析�
 ## 四、建议的标题
 给这条知识起一个清晰、有意义的标题。
 
+## 五、专家视角标注
+这条知识最适合哪些专家角色的视角？请从以下列表中选择 1-3 个最匹配的：
+{personas_list}
+
+请以 JSON 格式输出：
+```json
+{{"personas": ["角色ID1", "角色ID2"], "perspective": "一句话描述这个知识的视角/切入点"}}
+```
+
 ---
 请直接输出分析结果。"""
 
 
 class ContentLearner:
-    """内容学习器 - 从各种内容中学习知识"""
+    """内容学习器 - 从各种内容中学习知识
+
+    特性：
+    - 自动识别专家角色（personas）
+    - 深度分析提炼知识
+    """
 
     def __init__(
         self,
@@ -156,6 +206,42 @@ class ContentLearner:
         self.kb = knowledge_base
         self.llm = llm_provider
         self.scraper = WebScraper(use_playwright=use_playwright, max_pages=max_pages)
+        self.expert_matcher = ExpertMatcher(llm_provider)
+
+    def _parse_personas_from_analysis(self, analysis: str) -> tuple[list[str], str]:
+        """从分析结果中解析专家角色和视角
+
+        Returns:
+            (personas列表, perspective描述)
+        """
+        import json
+
+        personas = []
+        perspective = ""
+
+        # 尝试找到 JSON 块
+        json_match = re.search(r'```json\s*(\{.*?\})\s*```', analysis, re.DOTALL)
+        if json_match:
+            try:
+                data = json.loads(json_match.group(1))
+                personas = data.get("personas", [])
+                perspective = data.get("perspective", "")
+            except json.JSONDecodeError:
+                pass
+
+        # 如果没找到 JSON，尝试其他方式解析
+        if not personas:
+            # 查找 personas 关键词后面的内容
+            for line in analysis.split('\n'):
+                line_lower = line.lower()
+                for persona in ExpertPersona:
+                    if persona.value in line_lower:
+                        personas.append(persona.value)
+
+        # 去重并限制数量
+        personas = list(dict.fromkeys(personas))[:3]
+
+        return personas, perspective
 
     async def learn_from_article(
         self,
@@ -189,16 +275,22 @@ class ContentLearner:
                 error=f"内容太少（仅 {len(scraped.content)} 字符），可能是 SPA 页面或需要登录"
             )
 
-        # 用 LLM 分析
+        # 用 LLM 分析（包含专家角色识别）
         try:
-            prompt = ARTICLE_ANALYSIS_PROMPT.format(content=scraped.content[:20000])
+            prompt = ARTICLE_ANALYSIS_PROMPT.format(
+                content=scraped.content[:20000],
+                personas_list=EXPERT_PERSONAS_LIST
+            )
             messages = [{"role": "user", "content": prompt}]
             analysis = await self.llm.chat(messages)
 
             # 生成标题
             title = scraped.title or self._extract_title(url, analysis)
 
-            # 存入知识库
+            # 解析专家角色
+            personas, perspective = self._parse_personas_from_analysis(analysis)
+
+            # 存入知识库（带专家角色）
             knowledge = self.kb.add(
                 content=analysis,
                 knowledge_type=KnowledgeType.INSIGHT,
@@ -210,7 +302,9 @@ class ContentLearner:
                     "url": url,
                     "pages_scraped": scraped.pages_scraped,
                     "content_length": len(scraped.content)
-                }
+                },
+                personas=personas,
+                perspective=perspective
             )
 
             return LearningResult(
@@ -220,7 +314,9 @@ class ContentLearner:
                 analysis=analysis,
                 knowledge_id=knowledge.id,
                 pages_scraped=scraped.pages_scraped,
-                content_length=len(scraped.content)
+                content_length=len(scraped.content),
+                personas=personas,
+                perspective=perspective
             )
 
         except Exception as e:
@@ -253,13 +349,19 @@ class ContentLearner:
         if not scraped.content or len(scraped.content.strip()) < 100:
             return LearningResult(success=False, error="PDF 内容为空或太少")
 
-        # 用 LLM 分析
+        # 用 LLM 分析（包含专家角色识别）
         try:
-            prompt = ARTICLE_ANALYSIS_PROMPT.format(content=scraped.content[:25000])
+            prompt = ARTICLE_ANALYSIS_PROMPT.format(
+                content=scraped.content[:25000],
+                personas_list=EXPERT_PERSONAS_LIST
+            )
             messages = [{"role": "user", "content": prompt}]
             analysis = await self.llm.chat(messages)
 
             title = scraped.title or url_or_path.split('/')[-1]
+
+            # 解析专家角色
+            personas, perspective = self._parse_personas_from_analysis(analysis)
 
             # 存入知识库
             knowledge = self.kb.add(
@@ -272,7 +374,9 @@ class ContentLearner:
                     "source_type": "pdf",
                     "url": url_or_path,
                     "content_length": len(scraped.content)
-                }
+                },
+                personas=personas,
+                perspective=perspective
             )
 
             return LearningResult(
@@ -282,7 +386,9 @@ class ContentLearner:
                 analysis=analysis,
                 knowledge_id=knowledge.id,
                 pages_scraped=1,
-                content_length=len(scraped.content)
+                content_length=len(scraped.content),
+                personas=personas,
+                perspective=perspective
             )
 
         except Exception as e:
@@ -314,7 +420,10 @@ class ContentLearner:
             if context:
                 full_content = f"背景: {context}\n\n内容: {content}"
 
-            prompt = IDEA_EXTRACTION_PROMPT.format(content=full_content)
+            prompt = IDEA_EXTRACTION_PROMPT.format(
+                content=full_content,
+                personas_list=EXPERT_PERSONAS_LIST
+            )
             messages = [{"role": "user", "content": prompt}]
             analysis = await self.llm.chat(messages)
 
@@ -324,6 +433,9 @@ class ContentLearner:
             # 解析标题
             title = self._parse_title(analysis, content)
 
+            # 解析专家角色
+            personas, perspective = self._parse_personas_from_analysis(analysis)
+
             # 存入知识库
             knowledge = self.kb.add(
                 content=analysis,
@@ -331,7 +443,9 @@ class ContentLearner:
                 title=title,
                 source="user_input",
                 tags=["idea", "提炼"],
-                metadata={"source_type": "idea", "original": content[:500]}
+                metadata={"source_type": "idea", "original": content[:500]},
+                personas=personas,
+                perspective=perspective
             )
 
             return LearningResult(
@@ -339,7 +453,9 @@ class ContentLearner:
                 title=title,
                 knowledge_type=knowledge_type.value,
                 analysis=analysis,
-                knowledge_id=knowledge.id
+                knowledge_id=knowledge.id,
+                personas=personas,
+                perspective=perspective
             )
 
         except Exception as e:

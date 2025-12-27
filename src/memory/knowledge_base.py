@@ -39,7 +39,10 @@ class KnowledgeType(str, Enum):
 
 @dataclass
 class Knowledge:
-    """知识条目"""
+    """知识条目
+
+    包含知识的内容、类型、来源，以及人格化属性（专家角色）
+    """
     id: str
     content: str
     knowledge_type: KnowledgeType
@@ -48,6 +51,10 @@ class Knowledge:
     tags: list[str] = field(default_factory=list)
     created_at: str = field(default_factory=lambda: datetime.now().isoformat())
     metadata: dict = field(default_factory=dict)
+
+    # 人格化属性 - 知识属于哪些"专家"
+    personas: list[str] = field(default_factory=list)  # 专家角色列表
+    perspective: str = ""  # 这条知识的视角/切入点
 
     def to_dict(self) -> dict:
         return {
@@ -58,12 +65,19 @@ class Knowledge:
             "source": self.source,
             "tags": self.tags,
             "created_at": self.created_at,
-            "metadata": self.metadata
+            "metadata": self.metadata,
+            "personas": self.personas,
+            "perspective": self.perspective
         }
 
     @classmethod
     def from_dict(cls, data: dict) -> "Knowledge":
         data["knowledge_type"] = KnowledgeType(data["knowledge_type"])
+        # 兼容旧数据
+        if "personas" not in data:
+            data["personas"] = []
+        if "perspective" not in data:
+            data["perspective"] = ""
         return cls(**data)
 
 
@@ -157,7 +171,9 @@ class KnowledgeBase:
         title: str = "",
         source: str = "",
         tags: list[str] = None,
-        metadata: dict = None
+        metadata: dict = None,
+        personas: list[str] = None,
+        perspective: str = ""
     ) -> Knowledge:
         """添加知识
 
@@ -168,6 +184,8 @@ class KnowledgeBase:
             source: 来源
             tags: 标签
             metadata: 额外元数据
+            personas: 专家角色列表
+            perspective: 知识视角
 
         Returns:
             Knowledge 对象
@@ -183,7 +201,9 @@ class KnowledgeBase:
             title=title,
             source=source,
             tags=tags or [],
-            metadata=metadata or {}
+            metadata=metadata or {},
+            personas=personas or [],
+            perspective=perspective
         )
 
         # 生成 embedding
@@ -325,6 +345,61 @@ class KnowledgeBase:
             if any(t in k_tags_lower for t in tags_lower):
                 results.append(k)
         return results
+
+    def get_by_personas(self, personas: list[str]) -> list[Knowledge]:
+        """按专家角色获取"""
+        personas_lower = [p.lower() for p in personas]
+        results = []
+        for k in self._knowledge_meta.values():
+            k_personas_lower = [p.lower() for p in k.personas]
+            if any(p in k_personas_lower for p in personas_lower):
+                results.append(k)
+        return results
+
+    def search_with_personas(
+        self,
+        query: str,
+        personas: list[str] = None,
+        top_k: int = 5,
+        min_score: float = 0.3
+    ) -> list[RetrievalResult]:
+        """带专家角色过滤的智能检索
+
+        优先返回匹配指定专家角色的知识
+        """
+        self._ensure_initialized()
+
+        # 先做向量搜索
+        query_embedding = self._embedding.embed(query)
+        search_results = self._vector_store.search(query_embedding, top_k=top_k * 3)
+
+        results = []
+        persona_matched = []
+        other_matched = []
+
+        for sr in search_results:
+            if sr.score < min_score:
+                continue
+
+            knowledge = self._knowledge_meta.get(sr.document.id)
+            if not knowledge:
+                continue
+
+            result = RetrievalResult(knowledge=knowledge, relevance_score=sr.score)
+
+            # 如果指定了 personas，优先匹配
+            if personas:
+                k_personas_lower = [p.lower() for p in knowledge.personas]
+                if any(p.lower() in k_personas_lower for p in personas):
+                    persona_matched.append(result)
+                else:
+                    other_matched.append(result)
+            else:
+                other_matched.append(result)
+
+        # 组合结果：专家匹配的优先
+        results = persona_matched + other_matched
+        return results[:top_k]
 
     def delete(self, knowledge_id: str) -> bool:
         """删除知识"""

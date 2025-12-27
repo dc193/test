@@ -6,6 +6,7 @@
 - GitHubLearner: GitHub 学习器
 - ContentLearner: 内容学习器（文章、想法）
 - KnowledgeCurator: 知识管家（审查和管理）
+- ExpertSystem: 专家系统（知识人格化与自进化）
 
 架构设计（可插拔）：
 - EmbeddingProvider: 文本向量化（local / openai）
@@ -19,6 +20,16 @@ from .github_learner import GitHubLearner, learn_from_github
 from .content_learner import ContentLearner, LearningResult
 from .web_scraper import WebScraper, ScrapedContent, scrape_url, scrape_pdf
 from .knowledge_curator import KnowledgeCurator, ReviewResult, ReviewRecommendation
+from .expert_system import (
+    ExpertPersona,
+    ExpertProfile,
+    EXPERT_PROFILES,
+    ExpertMatcher,
+    EvolutionTracker,
+    KnowledgeEvolution,
+    KnowledgeUsageRecord
+)
+from .self_evolution import SelfEvolvingKnowledge, TaskContext, KnowledgeGap
 
 __all__ = [
     # 基础记忆
@@ -61,4 +72,18 @@ __all__ = [
     "KnowledgeCurator",
     "ReviewResult",
     "ReviewRecommendation",
+
+    # Expert System
+    "ExpertPersona",
+    "ExpertProfile",
+    "EXPERT_PROFILES",
+    "ExpertMatcher",
+    "EvolutionTracker",
+    "KnowledgeEvolution",
+    "KnowledgeUsageRecord",
+
+    # Self Evolution
+    "SelfEvolvingKnowledge",
+    "TaskContext",
+    "KnowledgeGap",
 ]

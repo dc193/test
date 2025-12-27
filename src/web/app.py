@@ -1774,17 +1774,46 @@ async def god_layer_page():
                     'insight': '洞察'
                 };
 
+                const personaNames = {
+                    'philosopher': '哲学家',
+                    'strategist': '战略家',
+                    'systems_thinker': '系统思考',
+                    'psychologist': '心理学家',
+                    'behavioral_economist': '行为经济',
+                    'ux_designer': 'UX设计',
+                    'growth_hacker': '增长黑客',
+                    'product_manager': '产品经理',
+                    'entrepreneur': '创业者',
+                    'marketer': '营销专家',
+                    'software_architect': '架构师',
+                    'engineer': '工程师',
+                    'data_scientist': '数据科学',
+                    'finance_expert': '金融专家',
+                    'designer': '设计师',
+                    'storyteller': '故事者'
+                };
+
                 let html = `<div style="color: #888; font-size: 0.85em; margin-bottom: 10px;">共 ${data.count} 条知识</div>`;
                 for (const k of data.knowledge) {
+                    // 专家角色标签
+                    let personaTags = '';
+                    if (k.personas && k.personas.length > 0) {
+                        personaTags = k.personas.map(p =>
+                            `<span class="tag" style="background: #2d4a5e; color: #00d4ff;">${personaNames[p] || p}</span>`
+                        ).join('');
+                    }
+
                     html += `
                     <div class="result-item" data-id="${k.id}">
                         <div style="display: flex; justify-content: space-between; align-items: flex-start;">
                             <div class="result-title">${escapeHtml(k.title || '无标题')}</div>
                             <button onclick="deleteKnowledgeItem('${k.id}')" style="width: auto; padding: 4px 10px; font-size: 0.75em; background: #4a1c1c; margin: 0;">删除</button>
                         </div>
+                        ${k.perspective ? `<div style="color: #888; font-size: 0.8em; font-style: italic; margin: 4px 0;">${escapeHtml(k.perspective)}</div>` : ''}
                         <div class="result-content">${escapeHtml(k.content_preview)}</div>
                         <div class="result-meta">
                             <span class="tag">${typeNames[k.type] || k.type}</span>
+                            ${personaTags}
                             ${k.source ? `<span>来源: ${k.source}</span>` : ''}
                             <span>${k.created_at ? new Date(k.created_at).toLocaleDateString() : ''}</span>
                         </div>
@@ -2198,7 +2227,9 @@ async def list_all_knowledge():
                     "source": k.source,
                     "tags": k.tags,
                     "created_at": k.created_at,
-                    "content_preview": k.content[:200] + "..." if len(k.content) > 200 else k.content
+                    "content_preview": k.content[:200] + "..." if len(k.content) > 200 else k.content,
+                    "personas": k.personas,  # 专家角色
+                    "perspective": k.perspective  # 知识视角
                 }
                 for k in all_knowledge
             ]
