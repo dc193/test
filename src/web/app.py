@@ -945,3 +945,119 @@ async def reset():
     company_instance = None
     websocket_connections.clear()
     return {"status": "ok"}
+
+
+# ==================== 知识库 API ====================
+
+@app.get("/api/knowledge/stats")
+async def knowledge_stats():
+    """获取知识库统计"""
+    company = get_company()
+    if company is None:
+        return {"error": "请先选择模型"}
+
+    try:
+        kb = company.knowledge_base
+        stats = kb.get_stats()
+        return {"status": "ok", **stats}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+@app.post("/api/knowledge/search")
+async def knowledge_search(request: dict):
+    """搜索知识库"""
+    company = get_company()
+    if company is None:
+        return {"error": "请先选择模型"}
+
+    query = request.get("query", "")
+    top_k = request.get("top_k", 5)
+    knowledge_type = request.get("type")  # 可选过滤
+
+    try:
+        kb = company.knowledge_base
+        results = kb.search(query, top_k=top_k)
+        return {
+            "status": "ok",
+            "results": [
+                {
+                    "id": r.knowledge.id,
+                    "title": r.knowledge.title,
+                    "content": r.knowledge.content[:500] + "..." if len(r.knowledge.content) > 500 else r.knowledge.content,
+                    "type": r.knowledge.knowledge_type.value,
+                    "source": r.knowledge.source,
+                    "score": round(r.relevance_score, 3)
+                }
+                for r in results
+            ]
+        }
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+@app.post("/api/knowledge/add")
+async def knowledge_add(request: dict):
+    """添加知识"""
+    company = get_company()
+    if company is None:
+        return {"error": "请先选择模型"}
+
+    content = request.get("content", "")
+    title = request.get("title", "")
+    knowledge_type = request.get("type", "best_practice")
+    source = request.get("source", "user_input")
+    tags = request.get("tags", [])
+
+    if not content:
+        return {"status": "error", "message": "内容不能为空"}
+
+    try:
+        from ..memory import KnowledgeType
+        kb = company.knowledge_base
+
+        # 转换类型
+        try:
+            kt = KnowledgeType(knowledge_type)
+        except ValueError:
+            kt = KnowledgeType.BEST_PRACTICE
+
+        knowledge = kb.add(
+            content=content,
+            knowledge_type=kt,
+            title=title,
+            source=source,
+            tags=tags
+        )
+
+        return {"status": "ok", "id": knowledge.id}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+@app.post("/api/knowledge/learn-github")
+async def learn_from_github(request: dict):
+    """从 GitHub 学习"""
+    company = get_company()
+    if company is None:
+        return {"error": "请先选择模型"}
+
+    repo_url = request.get("url", "")
+    if not repo_url:
+        return {"status": "error", "message": "请提供 GitHub URL"}
+
+    try:
+        from ..memory import GitHubLearner
+        kb = company.knowledge_base
+        learner = GitHubLearner(kb)
+
+        # 学习仓库
+        result = learner.learn_from_url(
+            repo_url,
+            max_files=request.get("max_files", 30),
+            cleanup=True
+        )
+
+        return {"status": "ok", **result}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}

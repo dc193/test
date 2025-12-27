@@ -8,6 +8,7 @@ import json
 
 from .message import Message
 from .llm import LLMProvider, create_llm_provider
+from ..memory import KnowledgeBase, create_knowledge_base
 
 
 class AgentStatus(Enum):
@@ -82,15 +83,39 @@ class MessageBus:
 
 
 class Company:
-    """AI公司 - 管理所有agent"""
+    """AI公司 - 管理所有agent
 
-    def __init__(self, llm: Optional[LLMProvider] = None):
+    God Layer 组成：
+    - User: 用户（通过 Web 界面交互）
+    - LLM: 可切换的对话模型
+    - Memory: 记忆系统
+      - memory: 短期/中期记忆（关键词搜索）
+      - knowledge_base: 长期知识库（向量搜索）
+    """
+
+    def __init__(
+        self,
+        llm: Optional[LLMProvider] = None,
+        knowledge_base: Optional[KnowledgeBase] = None
+    ):
         self.llm = llm or create_llm_provider()
         self.bus = MessageBus()
         self.agents: dict[str, Any] = {}  # agent_id -> agent instance
         self.agent_info: dict[str, AgentInfo] = {}
         self.current_project: Optional[dict] = None
-        self.memory = None  # 后续初始化
+        self.memory = None  # 短期/中期记忆，后续初始化
+
+        # 长期知识库 - 延迟初始化以避免启动时加载模型
+        self._knowledge_base = knowledge_base
+        self._kb_initialized = knowledge_base is not None
+
+    @property
+    def knowledge_base(self) -> KnowledgeBase:
+        """获取知识库（延迟初始化）"""
+        if not self._kb_initialized:
+            self._knowledge_base = create_knowledge_base()
+            self._kb_initialized = True
+        return self._knowledge_base
 
     def register_agent(self, agent_id: str, agent: Any, info: AgentInfo):
         """注册agent"""
