@@ -17,6 +17,7 @@ from .vector_store import VectorStore, ChromaVectorStore, FAISSVectorStore, Docu
 from .knowledge_base import KnowledgeBase, Knowledge, KnowledgeType, RetrievalResult, create_knowledge_base
 from .github_learner import GitHubLearner, learn_from_github
 from .content_learner import ContentLearner, LearningResult
+from .web_scraper import WebScraper, ScrapedContent, scrape_url, scrape_pdf
 from .knowledge_curator import KnowledgeCurator, ReviewResult, ReviewRecommendation
 
 __all__ = [
@@ -51,6 +52,10 @@ __all__ = [
     "learn_from_github",
     "ContentLearner",
     "LearningResult",
+    "WebScraper",
+    "ScrapedContent",
+    "scrape_url",
+    "scrape_pdf",
 
     # Curator
     "KnowledgeCurator",

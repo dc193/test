@@ -1,15 +1,16 @@
 """Content Learner - 从各种内容中学习
 
 支持：
-- 从网页文章学习
+- 从网页文章学习（多页爬取、JS 渲染）
+- 从 PDF 学习
 - 从文字/想法学习（AI 提炼）
-- 通用内容分析
 """
 import re
 from typing import Optional, TYPE_CHECKING
 from dataclasses import dataclass
 
 from .knowledge_base import KnowledgeBase, KnowledgeType
+from .web_scraper import WebScraper, ScrapedContent
 
 if TYPE_CHECKING:
     from ..core.llm import LLMProvider
@@ -24,6 +25,9 @@ class LearningResult:
     analysis: str = ""
     knowledge_id: str = ""
     error: str = ""
+    # 抓取信息
+    pages_scraped: int = 0
+    content_length: int = 0
 
     def to_dict(self) -> dict:
         return {
@@ -32,7 +36,9 @@ class LearningResult:
             "knowledge_type": self.knowledge_type,
             "analysis": self.analysis,
             "knowledge_id": self.knowledge_id,
-            "error": self.error
+            "error": self.error,
+            "pages_scraped": self.pages_scraped,
+            "content_length": self.content_length
         }
 
 
@@ -143,21 +149,26 @@ class ContentLearner:
     def __init__(
         self,
         knowledge_base: KnowledgeBase,
-        llm_provider: Optional["LLMProvider"] = None
+        llm_provider: Optional["LLMProvider"] = None,
+        use_playwright: bool = True,
+        max_pages: int = 5
     ):
         self.kb = knowledge_base
         self.llm = llm_provider
+        self.scraper = WebScraper(use_playwright=use_playwright, max_pages=max_pages)
 
     async def learn_from_article(
         self,
         url: str,
-        content: Optional[str] = None
+        depth: int = 2,
+        use_js: bool = True
     ) -> LearningResult:
-        """从网页文章学习
+        """从网页文章学习（支持多页爬取和 JS 渲染）
 
         Args:
             url: 文章 URL
-            content: 文章内容（如果已抓取）
+            depth: 爬取深度（1=只抓首页，2=首页+子页面）
+            use_js: 是否用 Playwright 渲染 JS
 
         Returns:
             学习结果
@@ -165,20 +176,27 @@ class ContentLearner:
         if not self.llm:
             return LearningResult(success=False, error="需要 LLM 来分析文章")
 
-        # 如果没有内容，尝试抓取
-        if not content:
-            content = await self._fetch_article(url)
-            if not content:
-                return LearningResult(success=False, error="无法获取文章内容")
+        # 使用智能爬虫抓取
+        self.scraper.use_playwright = use_js
+        scraped = await self.scraper.scrape(url, depth=depth)
+
+        if scraped.error:
+            return LearningResult(success=False, error=scraped.error)
+
+        if not scraped.content or len(scraped.content.strip()) < 100:
+            return LearningResult(
+                success=False,
+                error=f"内容太少（仅 {len(scraped.content)} 字符），可能是 SPA 页面或需要登录"
+            )
 
         # 用 LLM 分析
         try:
-            prompt = ARTICLE_ANALYSIS_PROMPT.format(content=content[:15000])
+            prompt = ARTICLE_ANALYSIS_PROMPT.format(content=scraped.content[:20000])
             messages = [{"role": "user", "content": prompt}]
             analysis = await self.llm.chat(messages)
 
             # 生成标题
-            title = self._extract_title(url, analysis)
+            title = scraped.title or self._extract_title(url, analysis)
 
             # 存入知识库
             knowledge = self.kb.add(
@@ -187,7 +205,12 @@ class ContentLearner:
                 title=f"[文章学习] {title}",
                 source=url,
                 tags=["article", "学习笔记"],
-                metadata={"source_type": "article", "url": url}
+                metadata={
+                    "source_type": "article",
+                    "url": url,
+                    "pages_scraped": scraped.pages_scraped,
+                    "content_length": len(scraped.content)
+                }
             )
 
             return LearningResult(
@@ -195,7 +218,71 @@ class ContentLearner:
                 title=title,
                 knowledge_type="insight",
                 analysis=analysis,
-                knowledge_id=knowledge.id
+                knowledge_id=knowledge.id,
+                pages_scraped=scraped.pages_scraped,
+                content_length=len(scraped.content)
+            )
+
+        except Exception as e:
+            return LearningResult(success=False, error=str(e))
+
+    async def learn_from_pdf(
+        self,
+        url_or_path: str
+    ) -> LearningResult:
+        """从 PDF 学习
+
+        Args:
+            url_or_path: PDF 的 URL 或本地路径
+
+        Returns:
+            学习结果
+        """
+        if not self.llm:
+            return LearningResult(success=False, error="需要 LLM 来分析 PDF")
+
+        # 抓取 PDF
+        if url_or_path.startswith(('http://', 'https://')):
+            scraped = await self.scraper._scrape_pdf(url_or_path)
+        else:
+            scraped = self.scraper.parse_pdf_file(url_or_path)
+
+        if scraped.error:
+            return LearningResult(success=False, error=scraped.error)
+
+        if not scraped.content or len(scraped.content.strip()) < 100:
+            return LearningResult(success=False, error="PDF 内容为空或太少")
+
+        # 用 LLM 分析
+        try:
+            prompt = ARTICLE_ANALYSIS_PROMPT.format(content=scraped.content[:25000])
+            messages = [{"role": "user", "content": prompt}]
+            analysis = await self.llm.chat(messages)
+
+            title = scraped.title or url_or_path.split('/')[-1]
+
+            # 存入知识库
+            knowledge = self.kb.add(
+                content=analysis,
+                knowledge_type=KnowledgeType.INSIGHT,
+                title=f"[PDF学习] {title}",
+                source=url_or_path,
+                tags=["pdf", "学习笔记"],
+                metadata={
+                    "source_type": "pdf",
+                    "url": url_or_path,
+                    "content_length": len(scraped.content)
+                }
+            )
+
+            return LearningResult(
+                success=True,
+                title=title,
+                knowledge_type="insight",
+                analysis=analysis,
+                knowledge_id=knowledge.id,
+                pages_scraped=1,
+                content_length=len(scraped.content)
             )
 
         except Exception as e:
@@ -257,41 +344,6 @@ class ContentLearner:
 
         except Exception as e:
             return LearningResult(success=False, error=str(e))
-
-    async def _fetch_article(self, url: str) -> Optional[str]:
-        """抓取文章内容"""
-        try:
-            import aiohttp
-            from bs4 import BeautifulSoup
-
-            async with aiohttp.ClientSession() as session:
-                async with session.get(url, timeout=30) as resp:
-                    if resp.status != 200:
-                        return None
-                    html = await resp.text()
-
-            soup = BeautifulSoup(html, 'html.parser')
-
-            # 移除脚本和样式
-            for script in soup(["script", "style", "nav", "footer", "header"]):
-                script.decompose()
-
-            # 尝试找文章正文
-            article = soup.find('article') or soup.find('main') or soup.find('body')
-            if article:
-                text = article.get_text(separator='\n', strip=True)
-                # 清理多余空行
-                text = re.sub(r'\n{3,}', '\n\n', text)
-                return text[:20000]
-
-            return None
-
-        except ImportError:
-            print("需要安装 aiohttp 和 beautifulsoup4: pip install aiohttp beautifulsoup4")
-            return None
-        except Exception as e:
-            print(f"抓取文章失败: {e}")
-            return None
 
     def _extract_title(self, url: str, analysis: str) -> str:
         """从分析结果中提取标题"""

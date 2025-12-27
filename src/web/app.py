@@ -1070,58 +1070,48 @@ async def god_layer_page():
                 <div class="results" id="search-results"></div>
             </div>
 
-            <!-- 智能学习 (多来源) -->
-            <div class="card" style="grid-column: span 2;">
+            <!-- 智能学习 -->
+            <div class="card">
                 <h2><span class="icon">🧠</span> 智能学习</h2>
-                <p style="color: #888; font-size: 0.85em; margin-bottom: 15px;">
-                    AI 会深度分析内容，提炼思维模式、行为原则和可复用的知识
-                </p>
 
-                <!-- 学习来源切换 -->
-                <div style="display: flex; gap: 10px; margin-bottom: 15px;">
-                    <button onclick="switchLearnMode('github')" id="tab-github" class="tab-btn active" style="flex: 1; background: #00d4ff;">GitHub 仓库</button>
-                    <button onclick="switchLearnMode('article')" id="tab-article" class="tab-btn" style="flex: 1; background: #333;">网页文章</button>
-                    <button onclick="switchLearnMode('idea')" id="tab-idea" class="tab-btn" style="flex: 1; background: #333;">想法/文字</button>
-                </div>
+                <!-- 来源选择 -->
+                <select id="learn-source" onchange="switchLearnMode(this.value)" style="margin-bottom: 15px;">
+                    <option value="github">GitHub 仓库</option>
+                    <option value="article">网页/文章</option>
+                    <option value="pdf">PDF 文档</option>
+                    <option value="idea">想法/文字</option>
+                </select>
 
-                <!-- GitHub 学习 -->
+                <!-- GitHub -->
                 <div id="learn-github" class="learn-panel">
                     <input type="text" id="github-url" placeholder="https://github.com/user/repo">
-                    <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 10px;">
-                        <label style="color: #888; font-size: 0.85em; white-space: nowrap;">分支:</label>
-                        <input type="text" id="github-branch" placeholder="默认分支" style="width: 120px;">
-                        <label style="color: #888; font-size: 0.85em; white-space: nowrap;">分析文件数:</label>
-                        <input type="number" id="max-files" value="10" min="1" max="30" style="width: 80px;">
+                    <div style="display: flex; gap: 8px; margin-bottom: 10px;">
+                        <input type="text" id="github-branch" placeholder="分支(可选)" style="flex: 1;">
+                        <input type="number" id="max-files" value="10" min="1" max="30" style="width: 60px;" title="分析文件数">
                     </div>
                     <button onclick="learnFromGithub()" id="learn-github-btn">开始学习</button>
                 </div>
 
-                <!-- 文章学习 -->
+                <!-- 网页 -->
                 <div id="learn-article" class="learn-panel" style="display: none;">
-                    <input type="text" id="article-url" placeholder="文章 URL (支持大多数网页)">
+                    <input type="text" id="article-url" placeholder="网页 URL">
+                    <p style="color: #666; font-size: 0.75em; margin: 5px 0;">支持多页爬取和 JS 渲染</p>
                     <button onclick="learnFromArticle()" id="learn-article-btn">开始学习</button>
                 </div>
 
-                <!-- 想法学习 -->
+                <!-- PDF -->
+                <div id="learn-pdf" class="learn-panel" style="display: none;">
+                    <input type="text" id="pdf-url" placeholder="PDF URL">
+                    <button onclick="learnFromPdf()" id="learn-pdf-btn">开始学习</button>
+                </div>
+
+                <!-- 想法 -->
                 <div id="learn-idea" class="learn-panel" style="display: none;">
-                    <textarea id="idea-content" placeholder="输入你的想法、笔记、或者任何文字...AI 会帮你提炼成结构化的知识" rows="5"></textarea>
-                    <input type="text" id="idea-context" placeholder="背景说明（可选）">
+                    <textarea id="idea-content" placeholder="输入想法、笔记或任何文字..." rows="4"></textarea>
                     <button onclick="learnFromIdea()" id="learn-idea-btn">AI 提炼</button>
                 </div>
 
                 <div class="status" id="learn-status"></div>
-
-                <!-- 学习结果展示区 -->
-                <div id="learn-result" style="display: none; margin-top: 15px; background: #252540; border-radius: 8px; padding: 15px;">
-                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
-                        <h3 style="color: #00d4ff; font-size: 1em; margin: 0;">
-                            <span id="result-title">学习结果</span>
-                            <span id="result-type" class="tag" style="margin-left: 10px;"></span>
-                        </h3>
-                        <button onclick="hideLearnResult()" style="width: auto; padding: 5px 10px; background: #333; font-size: 0.8em;">收起</button>
-                    </div>
-                    <div id="result-content" style="color: #ccc; font-size: 0.9em; line-height: 1.6; max-height: 400px; overflow-y: auto; white-space: pre-wrap;"></div>
-                </div>
             </div>
 
             <!-- 添加知识 (手动) -->
@@ -1306,16 +1296,14 @@ async def god_layer_page():
         function switchLearnMode(mode) {
             // 隐藏所有面板
             document.querySelectorAll('.learn-panel').forEach(p => p.style.display = 'none');
-            // 重置所有 tab
-            document.querySelectorAll('.tab-btn').forEach(b => b.style.background = '#333');
 
             // 显示选中的面板
-            document.getElementById('learn-' + mode).style.display = 'block';
-            document.getElementById('tab-' + mode).style.background = '#00d4ff';
+            const panel = document.getElementById('learn-' + mode);
+            if (panel) panel.style.display = 'block';
 
-            // 隐藏结果区
-            document.getElementById('learn-result').style.display = 'none';
+            // 清除状态
             document.getElementById('learn-status').className = 'status';
+            document.getElementById('learn-status').textContent = '';
         }
 
         // GitHub 学习
@@ -1354,13 +1342,10 @@ async def god_layer_page():
                     statusEl.textContent = data.error || data.message;
                 } else {
                     statusEl.className = 'status success';
-                    statusEl.textContent = `学习完成！分析了 ${data.files_read || 0} 个文件`;
+                    statusEl.textContent = `学习完成！分析了 ${data.files_read || 0} 个文件，可在知识列表中查看`;
                     loadStats();
-
-                    // 显示分析结果
-                    if (data.analysis) {
-                        showLearnResult(data.repo || 'GitHub 仓库', 'github_example', data.analysis);
-                    }
+                    document.getElementById('github-url').value = '';
+                    document.getElementById('github-branch').value = '';
                 }
 
             } catch (e) {
@@ -1387,10 +1372,55 @@ async def god_layer_page():
             btn.disabled = true;
             btn.textContent = 'AI 分析中...';
             statusEl.className = 'status loading';
-            statusEl.textContent = '正在抓取文章并深度分析...';
+            statusEl.textContent = '正在抓取文章并深度分析（支持多页爬取和 JS 渲染）...';
 
             try {
                 const resp = await fetch('/api/knowledge/learn-article', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ url, depth: 2, use_js: true })
+                });
+                const data = await resp.json();
+
+                if (data.error || data.status === 'error') {
+                    statusEl.className = 'status error';
+                    statusEl.textContent = data.error || data.message;
+                } else {
+                    statusEl.className = 'status success';
+                    const info = data.pages_scraped > 1 ? `（抓取了 ${data.pages_scraped} 页）` : '';
+                    statusEl.textContent = `学习完成！${info} 可在知识列表中查看`;
+                    loadStats();
+                    document.getElementById('article-url').value = '';
+                }
+
+            } catch (e) {
+                statusEl.className = 'status error';
+                statusEl.textContent = `学习失败: ${e.message}`;
+            }
+
+            btn.disabled = false;
+            btn.textContent = '开始学习';
+        }
+
+        // PDF 学习
+        async function learnFromPdf() {
+            const url = document.getElementById('pdf-url').value;
+            const statusEl = document.getElementById('learn-status');
+            const btn = document.getElementById('learn-pdf-btn');
+
+            if (!url) {
+                statusEl.className = 'status error';
+                statusEl.textContent = '请输入 PDF URL';
+                return;
+            }
+
+            btn.disabled = true;
+            btn.textContent = 'AI 分析中...';
+            statusEl.className = 'status loading';
+            statusEl.textContent = '正在下载并解析 PDF...';
+
+            try {
+                const resp = await fetch('/api/knowledge/learn-pdf', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ url })
@@ -1402,11 +1432,9 @@ async def god_layer_page():
                     statusEl.textContent = data.error || data.message;
                 } else {
                     statusEl.className = 'status success';
-                    statusEl.textContent = `学习完成！已提炼知识`;
+                    statusEl.textContent = `学习完成！可在知识列表中查看`;
                     loadStats();
-
-                    // 显示分析结果
-                    showLearnResult(data.title || '文章学习', data.knowledge_type, data.analysis);
+                    document.getElementById('pdf-url').value = '';
                 }
 
             } catch (e) {
@@ -1421,7 +1449,6 @@ async def god_layer_page():
         // 想法学习
         async function learnFromIdea() {
             const content = document.getElementById('idea-content').value;
-            const context = document.getElementById('idea-context').value;
             const statusEl = document.getElementById('learn-status');
             const btn = document.getElementById('learn-idea-btn');
 
@@ -1440,7 +1467,7 @@ async def god_layer_page():
                 const resp = await fetch('/api/knowledge/learn-idea', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ content, context })
+                    body: JSON.stringify({ content })
                 });
                 const data = await resp.json();
 
@@ -1449,15 +1476,9 @@ async def god_layer_page():
                     statusEl.textContent = data.error || data.message;
                 } else {
                     statusEl.className = 'status success';
-                    statusEl.textContent = `提炼完成！`;
+                    statusEl.textContent = `提炼完成！可在知识列表中查看`;
                     loadStats();
-
-                    // 显示分析结果
-                    showLearnResult(data.title || '知识提炼', data.knowledge_type, data.analysis);
-
-                    // 清空输入
                     document.getElementById('idea-content').value = '';
-                    document.getElementById('idea-context').value = '';
                 }
 
             } catch (e) {
@@ -1467,29 +1488,6 @@ async def god_layer_page():
 
             btn.disabled = false;
             btn.textContent = 'AI 提炼';
-        }
-
-        // 显示学习结果
-        function showLearnResult(title, type, analysis) {
-            const typeNames = {
-                'github_example': 'GitHub学习',
-                'insight': '洞察',
-                'thinking_pattern': '思维模式',
-                'behavior_principle': '行为原则',
-                'methodology': '方法论',
-                'best_practice': '最佳实践',
-                'code_pattern': '代码模式'
-            };
-
-            document.getElementById('result-title').textContent = title;
-            document.getElementById('result-type').textContent = typeNames[type] || type;
-            document.getElementById('result-content').textContent = analysis;
-            document.getElementById('learn-result').style.display = 'block';
-        }
-
-        // 隐藏学习结果
-        function hideLearnResult() {
-            document.getElementById('learn-result').style.display = 'none';
         }
 
         // 添加知识
@@ -2213,7 +2211,7 @@ async def list_all_knowledge():
 
 @app.post("/api/knowledge/learn-article")
 async def learn_from_article_api(request: dict):
-    """从文章 URL 学习"""
+    """从文章 URL 学习（支持多页爬取和 JS 渲染）"""
     company = get_company()
     if company is None:
         return {"error": "请先选择模型"}
@@ -2222,12 +2220,15 @@ async def learn_from_article_api(request: dict):
     if not url:
         return {"status": "error", "message": "请提供文章 URL"}
 
+    depth = request.get("depth", 2)  # 默认爬取首页+子页面
+    use_js = request.get("use_js", True)  # 默认使用 JS 渲染
+
     try:
         from ..memory import ContentLearner
         kb = company.knowledge_base
 
         learner = ContentLearner(kb, llm_provider=company.llm)
-        result = await learner.learn_from_article(url)
+        result = await learner.learn_from_article(url, depth=depth, use_js=use_js)
 
         if result.success:
             return {
@@ -2235,7 +2236,45 @@ async def learn_from_article_api(request: dict):
                 "title": result.title,
                 "knowledge_type": result.knowledge_type,
                 "analysis": result.analysis,
-                "knowledge_id": result.knowledge_id
+                "knowledge_id": result.knowledge_id,
+                "pages_scraped": result.pages_scraped,
+                "content_length": result.content_length
+            }
+        else:
+            return {"status": "error", "message": result.error}
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return {"status": "error", "message": str(e)}
+
+
+@app.post("/api/knowledge/learn-pdf")
+async def learn_from_pdf_api(request: dict):
+    """从 PDF 学习"""
+    company = get_company()
+    if company is None:
+        return {"error": "请先选择模型"}
+
+    url = request.get("url", "")
+    if not url:
+        return {"status": "error", "message": "请提供 PDF URL"}
+
+    try:
+        from ..memory import ContentLearner
+        kb = company.knowledge_base
+
+        learner = ContentLearner(kb, llm_provider=company.llm)
+        result = await learner.learn_from_pdf(url)
+
+        if result.success:
+            return {
+                "status": "ok",
+                "title": result.title,
+                "knowledge_type": result.knowledge_type,
+                "analysis": result.analysis,
+                "knowledge_id": result.knowledge_id,
+                "content_length": result.content_length
             }
         else:
             return {"status": "error", "message": result.error}
