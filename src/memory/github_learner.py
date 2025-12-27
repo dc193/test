@@ -241,8 +241,9 @@ class GitHubLearner:
                 code_files=code_text[:20000] if code_text else "（无代码文件）"
             )
 
-            # 调用 LLM (async)
-            analysis = await self.llm.chat(prompt)
+            # 调用 LLM (async) - 需要传入 messages 格式
+            messages = [{"role": "user", "content": prompt}]
+            analysis = await self.llm.chat(messages)
 
             stats["analysis"] = analysis
 
