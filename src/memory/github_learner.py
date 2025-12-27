@@ -2,18 +2,20 @@
 
 功能：
 - Clone 仓库
-- 分析代码结构
-- 提取重要代码片段
-- 存入知识库
+- 用 LLM 分析代码，提炼核心思路
+- 存入知识库（存的是"智慧"，不是原始代码）
 """
 import os
 import shutil
 import subprocess
 from pathlib import Path
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
 from dataclasses import dataclass
 
 from .knowledge_base import KnowledgeBase, Knowledge, KnowledgeType
+
+if TYPE_CHECKING:
+    from ..core.llm import LLMProvider
 
 
 @dataclass
@@ -26,10 +28,46 @@ class RepoInfo:
     description: str = ""
 
 
-class GitHubLearner:
-    """GitHub 学习器
+# LLM 分析提示词
+ANALYSIS_PROMPT = """你是一个代码分析专家。请分析以下 GitHub 仓库的代码，提炼出核心知识。
 
-    从 GitHub 仓库中提取知识并存入知识库
+## 仓库信息
+- 名称: {repo_name}
+- URL: {repo_url}
+
+## README 内容
+{readme_content}
+
+## 核心代码文件
+{code_files}
+
+---
+
+请用中文提炼以下内容（每个部分 2-5 句话，简洁有力）：
+
+### 1. 项目概述
+这个项目解决什么问题？目标用户是谁？
+
+### 2. 核心架构
+项目的整体架构是什么？主要模块如何划分？
+
+### 3. 关键实现思路
+最核心的技术实现是什么？有什么巧妙的设计？
+
+### 4. 设计模式与最佳实践
+使用了哪些设计模式？有什么值得学习的代码实践？
+
+### 5. 可复用的经验
+如果要做类似项目，可以复用哪些思路？有什么注意事项？
+
+请直接输出分析结果，不要有多余的开场白。
+"""
+
+
+class GitHubLearner:
+    """GitHub 学习器 - 用 LLM 分析并提炼知识
+
+    不是简单存储代码，而是让 AI 理解、分析、提炼
     """
 
     # 要分析的文件扩展名
@@ -55,45 +93,46 @@ class GitHubLearner:
     SKIP_DIRS = {
         "node_modules", "__pycache__", ".git", ".venv", "venv",
         "dist", "build", ".next", ".nuxt", "vendor", "target",
-        ".idea", ".vscode", "coverage", ".pytest_cache"
+        ".idea", ".vscode", "coverage", ".pytest_cache", "test", "tests"
     }
 
     # 重要文件（优先分析）
     IMPORTANT_FILES = {
         "README.md", "readme.md", "README.rst",
+        "main.py", "app.py", "index.js", "index.ts", "main.go",
         "setup.py", "pyproject.toml", "package.json",
-        "Cargo.toml", "go.mod", "pom.xml", "build.gradle",
-        "Makefile", "Dockerfile", "docker-compose.yml",
-        "main.py", "app.py", "index.js", "index.ts", "main.go"
     }
 
     def __init__(
         self,
         knowledge_base: KnowledgeBase,
+        llm_provider: Optional["LLMProvider"] = None,
         workspace_dir: str = "data/github_workspace"
     ):
         """初始化
 
         Args:
             knowledge_base: 知识库实例
+            llm_provider: LLM 提供者（用于分析代码）
             workspace_dir: 临时工作目录
         """
         self.kb = knowledge_base
+        self.llm = llm_provider
         self.workspace = Path(workspace_dir)
         self.workspace.mkdir(parents=True, exist_ok=True)
 
     def learn_from_url(
         self,
         repo_url: str,
-        max_files: int = 50,
-        max_file_size: int = 50000,  # 50KB
+        max_code_files: int = 10,
+        max_file_size: int = 30000,
         cleanup: bool = True
     ) -> dict:
         """从 GitHub URL 学习
 
         Args:
             repo_url: GitHub 仓库 URL
-            max_files: 最大分析文件数
+            max_code_files: 分析的核心代码文件数
             max_file_size: 最大文件大小
             cleanup: 学习后是否删除本地仓库
 
@@ -108,43 +147,13 @@ class GitHubLearner:
             return {"error": "Clone 失败"}
 
         try:
-            # 分析仓库
-            result = self._analyze_repo(repo_info, max_files, max_file_size)
+            # 用 LLM 分析并提炼
+            result = self._analyze_with_llm(repo_info, max_code_files, max_file_size)
             return result
         finally:
             # 清理
             if cleanup:
                 self._cleanup(repo_info)
-
-    def learn_from_local(
-        self,
-        local_path: str,
-        repo_name: str = "",
-        max_files: int = 50,
-        max_file_size: int = 50000
-    ) -> dict:
-        """从本地目录学习
-
-        Args:
-            local_path: 本地目录路径
-            repo_name: 仓库名称
-            max_files: 最大分析文件数
-            max_file_size: 最大文件大小
-
-        Returns:
-            学习结果统计
-        """
-        path = Path(local_path)
-        if not path.exists():
-            return {"error": f"路径不存在: {local_path}"}
-
-        repo_info = RepoInfo(
-            url=f"local://{local_path}",
-            name=repo_name or path.name,
-            local_path=path
-        )
-
-        return self._analyze_repo(repo_info, max_files, max_file_size)
 
     def _clone_repo(self, repo_url: str) -> Optional[RepoInfo]:
         """Clone 仓库"""
@@ -166,7 +175,7 @@ class GitHubLearner:
                 ["git", "clone", "--depth", "1", repo_url, str(local_path)],
                 capture_output=True,
                 text=True,
-                timeout=120  # 2分钟超时
+                timeout=120
             )
 
             if result.returncode != 0:
@@ -186,147 +195,181 @@ class GitHubLearner:
             print(f"Clone 错误: {e}")
             return None
 
-    def _analyze_repo(
+    def _analyze_with_llm(
         self,
         repo_info: RepoInfo,
-        max_files: int,
+        max_code_files: int,
         max_file_size: int
     ) -> dict:
-        """分析仓库"""
+        """用 LLM 分析仓库并提炼知识"""
         stats = {
             "repo": repo_info.name,
             "url": repo_info.url,
-            "files_analyzed": 0,
+            "files_read": 0,
             "knowledge_added": 0,
-            "languages": set(),
+            "analysis": None,
             "errors": []
         }
 
-        # 1. 先处理 README
-        self._process_readme(repo_info, stats)
+        # 1. 读取 README
+        readme_content = self._read_readme(repo_info)
+        if readme_content:
+            stats["files_read"] += 1
 
-        # 2. 分析重要文件
-        important_files = self._find_important_files(repo_info.local_path)
-        for file_path in important_files[:10]:  # 最多 10 个重要文件
-            self._process_file(file_path, repo_info, stats, max_file_size)
+        # 2. 读取核心代码文件
+        code_files_content = self._read_core_files(repo_info, max_code_files, max_file_size)
+        stats["files_read"] += len(code_files_content)
 
-        # 3. 分析代码文件
-        code_files = self._find_code_files(repo_info.local_path)
-        remaining = max_files - stats["files_analyzed"]
+        # 3. 如果没有 LLM，回退到简单存储
+        if self.llm is None:
+            print("警告: 没有 LLM provider，使用简单存储模式")
+            return self._simple_store(repo_info, readme_content, code_files_content, stats)
 
-        for file_path in code_files[:remaining]:
-            self._process_file(file_path, repo_info, stats, max_file_size)
+        # 4. 用 LLM 分析
+        print("正在用 AI 分析代码...")
+        try:
+            # 构建代码文件内容
+            code_text = ""
+            for file_path, content in code_files_content.items():
+                code_text += f"\n### {file_path}\n```\n{content[:5000]}\n```\n"
 
-        stats["languages"] = list(stats["languages"])
-        print(f"学习完成: 分析 {stats['files_analyzed']} 个文件，添加 {stats['knowledge_added']} 条知识")
+            # 构建 prompt
+            prompt = ANALYSIS_PROMPT.format(
+                repo_name=repo_info.name,
+                repo_url=repo_info.url,
+                readme_content=readme_content[:8000] if readme_content else "（无 README）",
+                code_files=code_text[:20000] if code_text else "（无代码文件）"
+            )
+
+            # 调用 LLM
+            import asyncio
+            analysis = asyncio.get_event_loop().run_until_complete(
+                self.llm.chat(prompt)
+            )
+
+            stats["analysis"] = analysis
+
+            # 5. 存入知识库
+            self.kb.add(
+                content=analysis,
+                knowledge_type=KnowledgeType.GITHUB_EXAMPLE,
+                title=f"[学习笔记] {repo_info.name}",
+                source=repo_info.url,
+                tags=["github", "学习笔记", repo_info.name],
+                metadata={
+                    "repo_name": repo_info.name,
+                    "files_analyzed": stats["files_read"],
+                    "analysis_type": "llm"
+                }
+            )
+            stats["knowledge_added"] = 1
+
+            print(f"学习完成: 分析了 {stats['files_read']} 个文件，提炼了 1 条知识")
+
+        except Exception as e:
+            stats["errors"].append(f"LLM 分析失败: {e}")
+            print(f"LLM 分析失败: {e}")
+            # 回退到简单存储
+            return self._simple_store(repo_info, readme_content, code_files_content, stats)
+
         return stats
 
-    def _find_important_files(self, root_path: Path) -> list[Path]:
-        """查找重要文件"""
-        files = []
-        for name in self.IMPORTANT_FILES:
-            file_path = root_path / name
-            if file_path.exists():
-                files.append(file_path)
-        return files
-
-    def _find_code_files(self, root_path: Path) -> list[Path]:
-        """查找代码文件"""
-        files = []
-
-        for ext in self.CODE_EXTENSIONS:
-            for file_path in root_path.rglob(f"*{ext}"):
-                # 跳过特定目录
-                if any(skip in file_path.parts for skip in self.SKIP_DIRS):
-                    continue
-                files.append(file_path)
-
-        # 按文件大小排序（小文件优先，可能更有代表性）
-        files.sort(key=lambda p: p.stat().st_size)
-        return files
-
-    def _process_readme(self, repo_info: RepoInfo, stats: dict):
-        """处理 README"""
+    def _read_readme(self, repo_info: RepoInfo) -> str:
+        """读取 README"""
         for name in ["README.md", "readme.md", "README.rst", "README"]:
             readme_path = repo_info.local_path / name
             if readme_path.exists():
                 try:
-                    content = readme_path.read_text(encoding="utf-8", errors="ignore")
-                    if content.strip():
-                        # 添加为文档知识
-                        self.kb.add(
-                            content=content[:10000],  # 限制长度
-                            knowledge_type=KnowledgeType.DOCUMENTATION,
-                            title=f"{repo_info.name} - README",
-                            source=repo_info.url,
-                            tags=["readme", "documentation", repo_info.name]
-                        )
-                        stats["knowledge_added"] += 1
-                        stats["files_analyzed"] += 1
-                except Exception as e:
-                    stats["errors"].append(f"README 处理失败: {e}")
-                break
+                    return readme_path.read_text(encoding="utf-8", errors="ignore")
+                except:
+                    pass
+        return ""
 
-    def _process_file(
+    def _read_core_files(
         self,
-        file_path: Path,
         repo_info: RepoInfo,
-        stats: dict,
+        max_files: int,
         max_file_size: int
-    ):
-        """处理单个文件"""
-        try:
-            # 检查文件大小
-            if file_path.stat().st_size > max_file_size:
-                return
+    ) -> dict[str, str]:
+        """读取核心代码文件"""
+        files_content = {}
 
-            # 读取内容
-            content = file_path.read_text(encoding="utf-8", errors="ignore")
-            if not content.strip():
-                return
+        # 先找入口文件
+        entry_files = ["main.py", "app.py", "index.js", "index.ts", "main.go", "src/main.py", "src/app.py"]
+        for entry in entry_files:
+            entry_path = repo_info.local_path / entry
+            if entry_path.exists() and entry_path.stat().st_size < max_file_size:
+                try:
+                    content = entry_path.read_text(encoding="utf-8", errors="ignore")
+                    files_content[entry] = content
+                except:
+                    pass
 
-            # 获取相对路径
-            rel_path = file_path.relative_to(repo_info.local_path)
+        # 再找其他核心文件
+        code_files = []
+        for ext in self.CODE_EXTENSIONS:
+            for file_path in repo_info.local_path.rglob(f"*{ext}"):
+                if any(skip in file_path.parts for skip in self.SKIP_DIRS):
+                    continue
+                if file_path.stat().st_size < max_file_size:
+                    code_files.append(file_path)
 
-            # 确定语言
-            ext = file_path.suffix.lower()
-            language = self.CODE_EXTENSIONS.get(ext, "Unknown")
-            stats["languages"].add(language)
+        # 按重要性排序（小文件优先，src 目录优先）
+        def importance(p):
+            score = p.stat().st_size
+            if "src" in p.parts:
+                score -= 10000
+            if p.name in self.IMPORTANT_FILES:
+                score -= 20000
+            return score
 
-            # 确定知识类型
-            knowledge_type = KnowledgeType.CODE_PATTERN
-            if file_path.name in self.IMPORTANT_FILES:
-                knowledge_type = KnowledgeType.BEST_PRACTICE
+        code_files.sort(key=importance)
 
-            # 构建知识内容
-            knowledge_content = f"""# {rel_path}
-Language: {language}
-Repository: {repo_info.name}
+        # 读取内容
+        for file_path in code_files:
+            if len(files_content) >= max_files:
+                break
+            rel_path = str(file_path.relative_to(repo_info.local_path))
+            if rel_path not in files_content:
+                try:
+                    content = file_path.read_text(encoding="utf-8", errors="ignore")
+                    files_content[rel_path] = content
+                except:
+                    pass
 
-```{ext[1:] if ext else ''}
-{content[:8000]}
-```
-"""
+        return files_content
 
-            # 添加到知识库
+    def _simple_store(
+        self,
+        repo_info: RepoInfo,
+        readme_content: str,
+        code_files: dict[str, str],
+        stats: dict
+    ) -> dict:
+        """简单存储模式（无 LLM 时的回退）"""
+        # 存 README
+        if readme_content:
             self.kb.add(
-                content=knowledge_content,
-                knowledge_type=knowledge_type,
-                title=f"{repo_info.name}/{rel_path}",
+                content=readme_content[:10000],
+                knowledge_type=KnowledgeType.DOCUMENTATION,
+                title=f"{repo_info.name} - README",
                 source=repo_info.url,
-                tags=[language.lower(), repo_info.name, ext[1:] if ext else "unknown"],
-                metadata={
-                    "file_path": str(rel_path),
-                    "language": language,
-                    "size": len(content)
-                }
+                tags=["readme", repo_info.name]
             )
-
-            stats["files_analyzed"] += 1
             stats["knowledge_added"] += 1
 
-        except Exception as e:
-            stats["errors"].append(f"{file_path}: {e}")
+        # 存核心代码
+        for file_path, content in list(code_files.items())[:5]:
+            self.kb.add(
+                content=f"# {file_path}\n\n```\n{content[:8000]}\n```",
+                knowledge_type=KnowledgeType.CODE_PATTERN,
+                title=f"{repo_info.name}/{file_path}",
+                source=repo_info.url,
+                tags=["code", repo_info.name]
+            )
+            stats["knowledge_added"] += 1
+
+        return stats
 
     def _cleanup(self, repo_info: RepoInfo):
         """清理临时文件"""
@@ -341,14 +384,16 @@ Repository: {repo_info.name}
 def learn_from_github(
     repo_url: str,
     knowledge_base: Optional[KnowledgeBase] = None,
+    llm_provider: Optional["LLMProvider"] = None,
     **kwargs
 ) -> dict:
     """便捷函数 - 从 GitHub 学习
 
     Args:
         repo_url: GitHub 仓库 URL
-        knowledge_base: 知识库实例（可选，会自动创建）
-        **kwargs: 传递给 learn_from_url 的参数
+        knowledge_base: 知识库实例
+        llm_provider: LLM 提供者（用于智能分析）
+        **kwargs: 其他参数
 
     Returns:
         学习结果统计
@@ -356,5 +401,5 @@ def learn_from_github(
     from .knowledge_base import create_knowledge_base
 
     kb = knowledge_base or create_knowledge_base()
-    learner = GitHubLearner(kb)
+    learner = GitHubLearner(kb, llm_provider=llm_provider)
     return learner.learn_from_url(repo_url, **kwargs)

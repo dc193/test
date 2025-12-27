@@ -1073,9 +1073,12 @@ async def god_layer_page():
             <!-- GitHub 学习 -->
             <div class="card">
                 <h2><span class="icon">📚</span> 从 GitHub 学习</h2>
+                <p style="color: #888; font-size: 0.85em; margin-bottom: 10px;">
+                    AI 会分析仓库代码，提炼核心架构、设计模式和可复用经验
+                </p>
                 <input type="text" id="github-url" placeholder="https://github.com/user/repo">
-                <input type="number" id="max-files" value="30" min="1" max="100" placeholder="最大文件数">
-                <button onclick="learnFromGithub()" id="learn-btn">开始学习</button>
+                <input type="number" id="max-files" value="10" min="1" max="30" placeholder="分析文件数">
+                <button onclick="learnFromGithub()" id="learn-btn">AI 分析学习</button>
                 <div class="status" id="learn-status"></div>
             </div>
 
@@ -1197,9 +1200,9 @@ async def god_layer_page():
             }
 
             btn.disabled = true;
-            btn.textContent = '学习中...';
+            btn.textContent = 'AI 分析中...';
             statusEl.className = 'status loading';
-            statusEl.textContent = '正在 Clone 并分析仓库，请稍候...';
+            statusEl.textContent = '正在 Clone 仓库并用 AI 分析代码，这可能需要 1-2 分钟...';
 
             try {
                 const resp = await fetch('/api/knowledge/learn-github', {
@@ -1214,7 +1217,11 @@ async def god_layer_page():
                     statusEl.textContent = data.error || data.message;
                 } else {
                     statusEl.className = 'status success';
-                    statusEl.textContent = `学习完成！分析了 ${data.files_analyzed} 个文件，添加了 ${data.knowledge_added} 条知识`;
+                    let msg = `学习完成！分析了 ${data.files_read || data.files_analyzed} 个文件`;
+                    if (data.analysis) {
+                        msg += '，已提炼核心知识';
+                    }
+                    statusEl.textContent = msg;
                     loadStats();
                 }
 
@@ -1224,7 +1231,7 @@ async def god_layer_page():
             }
 
             btn.disabled = false;
-            btn.textContent = '开始学习';
+            btn.textContent = 'AI 分析学习';
         }
 
         // 添加知识
@@ -1506,8 +1513,8 @@ async def knowledge_add(request: dict):
 
 
 @app.post("/api/knowledge/learn-github")
-async def learn_from_github(request: dict):
-    """从 GitHub 学习"""
+async def learn_from_github_api(request: dict):
+    """从 GitHub 学习 - 用当前选择的 LLM 分析代码"""
     company = get_company()
     if company is None:
         return {"error": "请先选择模型"}
@@ -1519,15 +1526,19 @@ async def learn_from_github(request: dict):
     try:
         from ..memory import GitHubLearner
         kb = company.knowledge_base
-        learner = GitHubLearner(kb)
+
+        # 传入 LLM provider，让 AI 分析代码
+        learner = GitHubLearner(kb, llm_provider=company.llm)
 
         # 学习仓库
         result = learner.learn_from_url(
             repo_url,
-            max_files=request.get("max_files", 30),
+            max_code_files=request.get("max_files", 10),
             cleanup=True
         )
 
         return {"status": "ok", **result}
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         return {"status": "error", "message": str(e)}
