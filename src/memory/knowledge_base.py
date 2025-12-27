@@ -20,12 +20,21 @@ from .vector_store import VectorStore, Document, SearchResult, create_vector_sto
 
 class KnowledgeType(str, Enum):
     """知识类型"""
+    # 技术知识
     PROJECT_EXPERIENCE = "project_experience"  # 项目经验
     CODE_PATTERN = "code_pattern"              # 代码模式
     BEST_PRACTICE = "best_practice"            # 最佳实践
-    USER_FEEDBACK = "user_feedback"            # 用户反馈
     GITHUB_EXAMPLE = "github_example"          # GitHub 示例
     DOCUMENTATION = "documentation"            # 文档
+
+    # 思想与方法论
+    THINKING_PATTERN = "thinking_pattern"      # 思维模式（为什么这样做）
+    BEHAVIOR_PRINCIPLE = "behavior_principle"  # 行为原则（什么时候做什么）
+    METHODOLOGY = "methodology"                # 方法论（怎么系统性解决问题）
+    INSIGHT = "insight"                        # 洞察（深刻的认识）
+
+    # 反馈
+    USER_FEEDBACK = "user_feedback"            # 用户反馈
 
 
 @dataclass

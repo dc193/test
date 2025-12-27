@@ -4,6 +4,7 @@
 - MemoryStore: 简单记忆存储（关键词搜索）
 - KnowledgeBase: 知识库（向量搜索）
 - GitHubLearner: GitHub 学习器
+- ContentLearner: 内容学习器（文章、想法）
 - KnowledgeCurator: 知识管家（审查和管理）
 
 架构设计（可插拔）：
@@ -15,6 +16,7 @@ from .embedding import EmbeddingProvider, LocalEmbedding, OpenAIEmbedding, creat
 from .vector_store import VectorStore, ChromaVectorStore, FAISSVectorStore, Document, SearchResult, create_vector_store
 from .knowledge_base import KnowledgeBase, Knowledge, KnowledgeType, RetrievalResult, create_knowledge_base
 from .github_learner import GitHubLearner, learn_from_github
+from .content_learner import ContentLearner, LearningResult
 from .knowledge_curator import KnowledgeCurator, ReviewResult, ReviewRecommendation
 
 __all__ = [
@@ -44,9 +46,11 @@ __all__ = [
     "RetrievalResult",
     "create_knowledge_base",
 
-    # GitHub
+    # Learners
     "GitHubLearner",
     "learn_from_github",
+    "ContentLearner",
+    "LearningResult",
 
     # Curator
     "KnowledgeCurator",
