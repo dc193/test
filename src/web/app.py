@@ -1,4 +1,7 @@
 """Web应用 - AI Company完整界面"""
+from dotenv import load_dotenv
+load_dotenv()  # 确保环境变量被加载
+
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, StreamingResponse
 from pydantic import BaseModel
