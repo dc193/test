@@ -60,13 +60,22 @@ class SelfEvolvingKnowledge:
     - 反馈学习：根据任务结果更新知识置信度
     - 经验提炼：从完成的任务中学习新知识
     - 缺口发现：识别需要补充的知识领域
+
+    防护机制：
+    - 学习冷却时间：避免频繁学习消耗 token
+    - 每日学习配额：限制每天自动学习次数
+    - 相似知识检测：避免重复学习相同内容
     """
 
     def __init__(
         self,
         knowledge_base: KnowledgeBase,
         llm_provider: Optional["LLMProvider"] = None,
-        data_dir: str = "data/knowledge"
+        data_dir: str = "data/knowledge",
+        # 防护配置
+        learning_cooldown_seconds: int = 60,  # 学习冷却时间（秒）
+        daily_learning_quota: int = 20,       # 每日学习配额
+        similarity_threshold: float = 0.85    # 相似度阈值（超过则视为重复）
     ):
         self.kb = knowledge_base
         self.llm = llm_provider
@@ -77,6 +86,17 @@ class SelfEvolvingKnowledge:
 
         # 进化追踪器
         self.evolution_tracker = EvolutionTracker(data_dir)
+
+        # 防护机制配置
+        self.learning_cooldown_seconds = learning_cooldown_seconds
+        self.daily_learning_quota = daily_learning_quota
+        self.similarity_threshold = similarity_threshold
+
+        # 防护状态
+        self._last_learning_time: Optional[datetime] = None
+        self._daily_learning_count = 0
+        self._last_reset_date: Optional[str] = None
+        self._load_protection_state()
 
         # 知识缺口
         self.gaps_file = self.data_dir / "knowledge_gaps.json"
@@ -106,6 +126,117 @@ class SelfEvolvingKnowledge:
                 ensure_ascii=False,
                 indent=2
             )
+
+    # ==================== 防护机制 ====================
+
+    def _load_protection_state(self):
+        """加载防护状态"""
+        state_file = self.data_dir / "protection_state.json"
+        if state_file.exists():
+            try:
+                with open(state_file, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    self._daily_learning_count = data.get("daily_learning_count", 0)
+                    self._last_reset_date = data.get("last_reset_date")
+                    last_time = data.get("last_learning_time")
+                    if last_time:
+                        self._last_learning_time = datetime.fromisoformat(last_time)
+            except Exception as e:
+                print(f"加载防护状态失败: {e}")
+
+    def _save_protection_state(self):
+        """保存防护状态"""
+        state_file = self.data_dir / "protection_state.json"
+        self.data_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            with open(state_file, "w", encoding="utf-8") as f:
+                json.dump({
+                    "daily_learning_count": self._daily_learning_count,
+                    "last_reset_date": self._last_reset_date,
+                    "last_learning_time": self._last_learning_time.isoformat() if self._last_learning_time else None
+                }, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            print(f"保存防护状态失败: {e}")
+
+    def _check_can_learn(self) -> tuple[bool, str]:
+        """检查是否可以学习
+
+        Returns:
+            (can_learn, reason) - 是否可以学习及原因
+        """
+        now = datetime.now()
+        today = now.strftime("%Y-%m-%d")
+
+        # 检查是否需要重置每日计数
+        if self._last_reset_date != today:
+            self._daily_learning_count = 0
+            self._last_reset_date = today
+            self._save_protection_state()
+
+        # 检查每日配额
+        if self._daily_learning_count >= self.daily_learning_quota:
+            return False, f"已达到每日学习配额 ({self.daily_learning_quota} 次)"
+
+        # 检查冷却时间
+        if self._last_learning_time:
+            elapsed = (now - self._last_learning_time).total_seconds()
+            if elapsed < self.learning_cooldown_seconds:
+                remaining = int(self.learning_cooldown_seconds - elapsed)
+                return False, f"学习冷却中，还需等待 {remaining} 秒"
+
+        return True, "可以学习"
+
+    def _record_learning(self):
+        """记录一次学习"""
+        self._last_learning_time = datetime.now()
+        self._daily_learning_count += 1
+        self._save_protection_state()
+
+    def _check_similar_knowledge_exists(self, content: str) -> tuple[bool, Optional[str]]:
+        """检查是否已存在相似知识
+
+        Args:
+            content: 要检查的内容
+
+        Returns:
+            (exists, existing_id) - 是否存在相似知识及其ID
+        """
+        # 搜索相似内容
+        results = self.kb.search(content, top_k=3)
+
+        for result in results:
+            if result.score >= self.similarity_threshold:
+                return True, result.knowledge.id
+
+        return False, None
+
+    def get_protection_status(self) -> dict:
+        """获取防护状态"""
+        now = datetime.now()
+        today = now.strftime("%Y-%m-%d")
+
+        # 检查是否需要重置
+        if self._last_reset_date != today:
+            remaining_quota = self.daily_learning_quota
+        else:
+            remaining_quota = max(0, self.daily_learning_quota - self._daily_learning_count)
+
+        # 计算冷却剩余时间
+        cooldown_remaining = 0
+        if self._last_learning_time:
+            elapsed = (now - self._last_learning_time).total_seconds()
+            if elapsed < self.learning_cooldown_seconds:
+                cooldown_remaining = int(self.learning_cooldown_seconds - elapsed)
+
+        return {
+            "daily_quota": self.daily_learning_quota,
+            "remaining_quota": remaining_quota,
+            "used_today": self._daily_learning_count,
+            "cooldown_seconds": self.learning_cooldown_seconds,
+            "cooldown_remaining": cooldown_remaining,
+            "similarity_threshold": self.similarity_threshold,
+            "can_learn": cooldown_remaining == 0 and remaining_quota > 0
+        }
 
     # ==================== 专家召唤 ====================
 
@@ -232,8 +363,9 @@ class SelfEvolvingKnowledge:
     async def learn_from_task(
         self,
         task_id: str,
-        task_result: str
-    ) -> Optional[Knowledge]:
+        task_result: str,
+        force: bool = False
+    ) -> tuple[Optional[Knowledge], str]:
         """从完成的任务中学习
 
         分析任务执行过程，提炼可复用的经验
@@ -241,16 +373,23 @@ class SelfEvolvingKnowledge:
         Args:
             task_id: 任务 ID
             task_result: 任务执行结果
+            force: 是否强制学习（跳过防护检查）
 
         Returns:
-            新学到的知识（如果有价值的话）
+            (knowledge, message) - 新学到的知识和消息
         """
         if not self.llm:
-            return None
+            return None, "未配置 LLM Provider"
 
         context = self._current_tasks.get(task_id)
         if not context:
-            return None
+            return None, f"未找到任务: {task_id}"
+
+        # 防护检查（除非强制）
+        if not force:
+            can_learn, reason = self._check_can_learn()
+            if not can_learn:
+                return None, f"学习被阻止: {reason}"
 
         # 构建分析 prompt
         prompt = f"""分析以下任务执行过程，提炼可复用的经验教训。
@@ -308,13 +447,21 @@ class SelfEvolvingKnowledge:
             import re
             json_match = re.search(r'```json\s*(\{.*?\})\s*```', response, re.DOTALL)
             if not json_match:
-                return None
+                return None, "无法解析 LLM 响应"
 
             data = json.loads(json_match.group(1))
 
             if not data.get("should_save"):
-                print(f"任务 {task_id} 没有产生新的可记录经验: {data.get('reason', '')}")
-                return None
+                reason = data.get('reason', '无新经验')
+                print(f"任务 {task_id} 没有产生新的可记录经验: {reason}")
+                return None, f"无需保存: {reason}"
+
+            # 检查相似知识（除非强制）
+            content = data.get("content", "")
+            if not force:
+                exists, existing_id = self._check_similar_knowledge_exists(content)
+                if exists:
+                    return None, f"已存在相似知识 (ID: {existing_id})，跳过保存"
 
             # 存入知识库
             knowledge_type = KnowledgeType.METHODOLOGY
@@ -325,7 +472,7 @@ class SelfEvolvingKnowledge:
                 pass
 
             knowledge = self.kb.add(
-                content=data.get("content", ""),
+                content=content,
                 knowledge_type=knowledge_type,
                 title=f"[任务学习] {data.get('title', task_id)}",
                 source=f"task:{task_id}",
@@ -339,14 +486,17 @@ class SelfEvolvingKnowledge:
                 perspective=data.get("perspective", "")
             )
 
+            # 记录学习（更新防护状态）
+            self._record_learning()
+
             context.lessons_learned = knowledge.id
             print(f"从任务 {task_id} 学到新知识: {knowledge.title}")
 
-            return knowledge
+            return knowledge, f"成功学习: {knowledge.title}"
 
         except Exception as e:
             print(f"从任务学习失败: {e}")
-            return None
+            return None, f"学习失败: {str(e)}"
 
     # ==================== 缺口发现 ====================
 
@@ -354,8 +504,9 @@ class SelfEvolvingKnowledge:
         self,
         task_description: str,
         task_id: str,
-        failure_reason: str = ""
-    ) -> Optional[KnowledgeGap]:
+        failure_reason: str = "",
+        force: bool = False
+    ) -> tuple[Optional[KnowledgeGap], str]:
         """发现知识缺口
 
         当任务执行遇到困难时，分析是否存在知识缺口
@@ -364,12 +515,19 @@ class SelfEvolvingKnowledge:
             task_description: 任务描述
             task_id: 任务 ID
             failure_reason: 失败原因
+            force: 是否强制分析（跳过防护检查）
 
         Returns:
-            知识缺口（如果发现的话）
+            (gap, message) - 知识缺口和消息
         """
         if not self.llm:
-            return None
+            return None, "未配置 LLM Provider"
+
+        # 防护检查（除非强制）
+        if not force:
+            can_learn, reason = self._check_can_learn()
+            if not can_learn:
+                return None, f"分析被阻止: {reason}"
 
         prompt = f"""分析以下任务执行困难的原因，判断是否存在知识缺口。
 
@@ -405,20 +563,26 @@ class SelfEvolvingKnowledge:
             import re
             json_match = re.search(r'```json\s*(\{.*?\})\s*```', response, re.DOTALL)
             if not json_match:
-                return None
+                return None, "无法解析 LLM 响应"
 
             data = json.loads(json_match.group(1))
 
             if not data.get("has_gap"):
-                return None
+                return None, "未发现知识缺口"
+
+            # 检查是否已存在相同描述的缺口
+            gap_desc = data.get("gap_description", "")
+            for existing_gap in self._gaps.values():
+                if existing_gap.description == gap_desc and not existing_gap.resolved:
+                    return None, f"已存在相同的知识缺口 (ID: {existing_gap.id})"
 
             # 创建知识缺口记录
             import hashlib
-            gap_id = f"gap_{hashlib.md5(data['gap_description'].encode()).hexdigest()[:8]}"
+            gap_id = f"gap_{hashlib.md5(gap_desc.encode()).hexdigest()[:8]}"
 
             gap = KnowledgeGap(
                 id=gap_id,
-                description=data.get("gap_description", ""),
+                description=gap_desc,
                 domain=data.get("domain", ""),
                 discovered_at=datetime.now().isoformat(),
                 task_id=task_id,
@@ -428,12 +592,15 @@ class SelfEvolvingKnowledge:
             self._gaps[gap_id] = gap
             self._save_gaps()
 
+            # 记录学习（更新防护状态）
+            self._record_learning()
+
             print(f"发现知识缺口: {gap.description}")
-            return gap
+            return gap, f"发现知识缺口: {gap.description}"
 
         except Exception as e:
             print(f"发现知识缺口失败: {e}")
-            return None
+            return None, f"分析失败: {str(e)}"
 
     def get_unresolved_gaps(self) -> list[KnowledgeGap]:
         """获取未解决的知识缺口"""
