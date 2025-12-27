@@ -113,6 +113,17 @@ async def index():
         }
         .header h1 { font-size: 1.5rem; color: #e94560; }
         .header-right { display: flex; gap: 1rem; align-items: center; }
+        .god-link {
+            background: linear-gradient(135deg, #667eea, #764ba2);
+            color: #fff;
+            text-decoration: none;
+            padding: 0.5rem 1rem;
+            border-radius: 6px;
+            font-size: 0.85rem;
+            font-weight: 600;
+            transition: opacity 0.2s;
+        }
+        .god-link:hover { opacity: 0.85; }
         .status { font-size: 0.9rem; color: #888; }
         .status .state { color: #4ecca3; font-weight: bold; }
 
@@ -449,6 +460,7 @@ async def index():
     <div class="header">
         <h1>AI Company v0.1</h1>
         <div class="header-right">
+            <a href="/god" class="god-link">God Layer</a>
             <div class="provider-select">
                 <label>模型:</label>
                 <select id="model-select" onchange="changeModel()">
@@ -818,6 +830,464 @@ async def websocket_endpoint(websocket: WebSocket):
             await websocket.receive_text()
     except WebSocketDisconnect:
         websocket_connections.remove(websocket)
+
+
+@app.get("/god", response_class=HTMLResponse)
+async def god_layer_page():
+    """God Layer 管理页面 - 知识库、学习、记忆管理"""
+    html_content = """
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>God Layer - AI Company</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background: #0a0a1a;
+            color: #e0e0e0;
+            min-height: 100vh;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 20px 0;
+            border-bottom: 1px solid #333;
+            margin-bottom: 30px;
+        }
+        h1 {
+            color: #00d4ff;
+            font-size: 1.8em;
+        }
+        h1 span { color: #666; font-weight: normal; }
+        .back-btn {
+            background: #333;
+            color: #fff;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 6px;
+            cursor: pointer;
+            text-decoration: none;
+        }
+        .back-btn:hover { background: #444; }
+
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+            gap: 20px;
+        }
+        .card {
+            background: #1a1a2e;
+            border-radius: 12px;
+            padding: 20px;
+            border: 1px solid #333;
+        }
+        .card h2 {
+            color: #00d4ff;
+            margin-bottom: 15px;
+            font-size: 1.2em;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .card h2 .icon { font-size: 1.4em; }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 10px;
+        }
+        .stat-item {
+            background: #252540;
+            padding: 15px;
+            border-radius: 8px;
+            text-align: center;
+        }
+        .stat-value {
+            font-size: 2em;
+            color: #00d4ff;
+            font-weight: bold;
+        }
+        .stat-label {
+            color: #888;
+            font-size: 0.85em;
+            margin-top: 5px;
+        }
+
+        input, textarea {
+            width: 100%;
+            padding: 12px;
+            border: 1px solid #333;
+            border-radius: 6px;
+            background: #252540;
+            color: #fff;
+            font-size: 14px;
+            margin-bottom: 10px;
+        }
+        input:focus, textarea:focus {
+            outline: none;
+            border-color: #00d4ff;
+        }
+        textarea { resize: vertical; min-height: 100px; }
+
+        button {
+            background: linear-gradient(135deg, #00d4ff, #0099cc);
+            color: #000;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: 600;
+            width: 100%;
+            margin-top: 10px;
+        }
+        button:hover { opacity: 0.9; }
+        button:disabled {
+            background: #333;
+            color: #666;
+            cursor: not-allowed;
+        }
+        button.secondary {
+            background: #333;
+            color: #fff;
+        }
+
+        .results {
+            margin-top: 15px;
+            max-height: 400px;
+            overflow-y: auto;
+        }
+        .result-item {
+            background: #252540;
+            padding: 12px;
+            border-radius: 6px;
+            margin-bottom: 10px;
+            border-left: 3px solid #00d4ff;
+        }
+        .result-title {
+            color: #00d4ff;
+            font-weight: 600;
+            margin-bottom: 5px;
+        }
+        .result-content {
+            color: #aaa;
+            font-size: 0.9em;
+            white-space: pre-wrap;
+            max-height: 100px;
+            overflow: hidden;
+        }
+        .result-meta {
+            display: flex;
+            gap: 15px;
+            margin-top: 8px;
+            font-size: 0.8em;
+            color: #666;
+        }
+        .result-score {
+            color: #4caf50;
+        }
+
+        .status {
+            padding: 10px;
+            border-radius: 6px;
+            margin-top: 10px;
+            display: none;
+        }
+        .status.success { background: #1b4332; color: #4caf50; display: block; }
+        .status.error { background: #4a1c1c; color: #f44336; display: block; }
+        .status.loading { background: #1a3a5c; color: #00d4ff; display: block; }
+
+        .tag {
+            display: inline-block;
+            background: #333;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 0.75em;
+            margin-right: 5px;
+        }
+
+        select {
+            width: 100%;
+            padding: 12px;
+            border: 1px solid #333;
+            border-radius: 6px;
+            background: #252540;
+            color: #fff;
+            font-size: 14px;
+            margin-bottom: 10px;
+        }
+
+        .type-list {
+            margin-top: 10px;
+        }
+        .type-item {
+            display: flex;
+            justify-content: space-between;
+            padding: 8px 0;
+            border-bottom: 1px solid #333;
+        }
+        .type-item:last-child { border-bottom: none; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>God Layer <span>/ 上帝层管理</span></h1>
+            <a href="/" class="back-btn">← 返回 AI Company</a>
+        </header>
+
+        <div class="grid">
+            <!-- 知识库统计 -->
+            <div class="card">
+                <h2><span class="icon">📊</span> 知识库统计</h2>
+                <div class="stats-grid" id="stats">
+                    <div class="stat-item">
+                        <div class="stat-value" id="total-count">-</div>
+                        <div class="stat-label">总知识数</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-value" id="type-count">-</div>
+                        <div class="stat-label">知识类型</div>
+                    </div>
+                </div>
+                <div class="type-list" id="type-list"></div>
+                <button class="secondary" onclick="loadStats()">刷新统计</button>
+            </div>
+
+            <!-- 搜索知识 -->
+            <div class="card">
+                <h2><span class="icon">🔍</span> 搜索知识</h2>
+                <input type="text" id="search-query" placeholder="输入搜索内容...">
+                <button onclick="searchKnowledge()">搜索</button>
+                <div class="results" id="search-results"></div>
+            </div>
+
+            <!-- GitHub 学习 -->
+            <div class="card">
+                <h2><span class="icon">📚</span> 从 GitHub 学习</h2>
+                <input type="text" id="github-url" placeholder="https://github.com/user/repo">
+                <input type="number" id="max-files" value="30" min="1" max="100" placeholder="最大文件数">
+                <button onclick="learnFromGithub()" id="learn-btn">开始学习</button>
+                <div class="status" id="learn-status"></div>
+            </div>
+
+            <!-- 添加知识 -->
+            <div class="card">
+                <h2><span class="icon">➕</span> 添加知识</h2>
+                <input type="text" id="add-title" placeholder="标题">
+                <select id="add-type">
+                    <option value="best_practice">最佳实践</option>
+                    <option value="code_pattern">代码模式</option>
+                    <option value="project_experience">项目经验</option>
+                    <option value="documentation">文档</option>
+                    <option value="user_feedback">用户反馈</option>
+                </select>
+                <textarea id="add-content" placeholder="知识内容..."></textarea>
+                <input type="text" id="add-tags" placeholder="标签（逗号分隔）">
+                <button onclick="addKnowledge()">添加</button>
+                <div class="status" id="add-status"></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // 加载统计
+        async function loadStats() {
+            try {
+                const resp = await fetch('/api/knowledge/stats');
+                const data = await resp.json();
+
+                if (data.error) {
+                    document.getElementById('total-count').textContent = '!';
+                    return;
+                }
+
+                document.getElementById('total-count').textContent = data.total || 0;
+                document.getElementById('type-count').textContent = Object.keys(data.by_type || {}).length;
+
+                // 显示类型分布
+                const typeList = document.getElementById('type-list');
+                const typeNames = {
+                    'project_experience': '项目经验',
+                    'code_pattern': '代码模式',
+                    'best_practice': '最佳实践',
+                    'user_feedback': '用户反馈',
+                    'github_example': 'GitHub示例',
+                    'documentation': '文档'
+                };
+
+                let html = '';
+                for (const [type, count] of Object.entries(data.by_type || {})) {
+                    html += `<div class="type-item">
+                        <span>${typeNames[type] || type}</span>
+                        <span>${count}</span>
+                    </div>`;
+                }
+                typeList.innerHTML = html;
+
+            } catch (e) {
+                console.error(e);
+            }
+        }
+
+        // 搜索知识
+        async function searchKnowledge() {
+            const query = document.getElementById('search-query').value;
+            if (!query) return;
+
+            const resultsEl = document.getElementById('search-results');
+            resultsEl.innerHTML = '<div class="status loading">搜索中...</div>';
+
+            try {
+                const resp = await fetch('/api/knowledge/search', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ query, top_k: 10 })
+                });
+                const data = await resp.json();
+
+                if (data.error || data.status === 'error') {
+                    resultsEl.innerHTML = `<div class="status error">${data.error || data.message}</div>`;
+                    return;
+                }
+
+                if (!data.results || data.results.length === 0) {
+                    resultsEl.innerHTML = '<div class="status">没有找到相关知识</div>';
+                    return;
+                }
+
+                let html = '';
+                for (const r of data.results) {
+                    html += `<div class="result-item">
+                        <div class="result-title">${r.title || '无标题'}</div>
+                        <div class="result-content">${escapeHtml(r.content)}</div>
+                        <div class="result-meta">
+                            <span class="tag">${r.type}</span>
+                            <span class="result-score">相似度: ${(r.score * 100).toFixed(1)}%</span>
+                            ${r.source ? `<span>来源: ${r.source}</span>` : ''}
+                        </div>
+                    </div>`;
+                }
+                resultsEl.innerHTML = html;
+
+            } catch (e) {
+                resultsEl.innerHTML = `<div class="status error">搜索失败: ${e.message}</div>`;
+            }
+        }
+
+        // GitHub 学习
+        async function learnFromGithub() {
+            const url = document.getElementById('github-url').value;
+            const maxFiles = document.getElementById('max-files').value;
+            const statusEl = document.getElementById('learn-status');
+            const btn = document.getElementById('learn-btn');
+
+            if (!url) {
+                statusEl.className = 'status error';
+                statusEl.textContent = '请输入 GitHub URL';
+                return;
+            }
+
+            btn.disabled = true;
+            btn.textContent = '学习中...';
+            statusEl.className = 'status loading';
+            statusEl.textContent = '正在 Clone 并分析仓库，请稍候...';
+
+            try {
+                const resp = await fetch('/api/knowledge/learn-github', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ url, max_files: parseInt(maxFiles) })
+                });
+                const data = await resp.json();
+
+                if (data.error || data.status === 'error') {
+                    statusEl.className = 'status error';
+                    statusEl.textContent = data.error || data.message;
+                } else {
+                    statusEl.className = 'status success';
+                    statusEl.textContent = `学习完成！分析了 ${data.files_analyzed} 个文件，添加了 ${data.knowledge_added} 条知识`;
+                    loadStats();
+                }
+
+            } catch (e) {
+                statusEl.className = 'status error';
+                statusEl.textContent = `学习失败: ${e.message}`;
+            }
+
+            btn.disabled = false;
+            btn.textContent = '开始学习';
+        }
+
+        // 添加知识
+        async function addKnowledge() {
+            const title = document.getElementById('add-title').value;
+            const type = document.getElementById('add-type').value;
+            const content = document.getElementById('add-content').value;
+            const tagsStr = document.getElementById('add-tags').value;
+            const statusEl = document.getElementById('add-status');
+
+            if (!content) {
+                statusEl.className = 'status error';
+                statusEl.textContent = '内容不能为空';
+                return;
+            }
+
+            const tags = tagsStr ? tagsStr.split(',').map(t => t.trim()).filter(t => t) : [];
+
+            try {
+                const resp = await fetch('/api/knowledge/add', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ title, type, content, tags, source: 'user_input' })
+                });
+                const data = await resp.json();
+
+                if (data.error || data.status === 'error') {
+                    statusEl.className = 'status error';
+                    statusEl.textContent = data.error || data.message;
+                } else {
+                    statusEl.className = 'status success';
+                    statusEl.textContent = `添加成功！ID: ${data.id}`;
+                    // 清空输入
+                    document.getElementById('add-title').value = '';
+                    document.getElementById('add-content').value = '';
+                    document.getElementById('add-tags').value = '';
+                    loadStats();
+                }
+
+            } catch (e) {
+                statusEl.className = 'status error';
+                statusEl.textContent = `添加失败: ${e.message}`;
+            }
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        // 回车搜索
+        document.getElementById('search-query').addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') searchKnowledge();
+        });
+
+        // 初始化
+        loadStats();
+    </script>
+</body>
+</html>
+    """
+    return HTMLResponse(content=html_content)
 
 
 @app.get("/api/providers")
