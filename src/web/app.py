@@ -1101,6 +1101,64 @@ async def god_layer_page():
                 <button onclick="addKnowledge()">添加</button>
                 <div class="status" id="add-status"></div>
             </div>
+
+            <!-- 知识管家 -->
+            <div class="card" style="grid-column: span 2;">
+                <h2><span class="icon">🧹</span> 知识管家</h2>
+                <p style="color: #888; font-size: 0.85em; margin-bottom: 15px;">
+                    AI 会根据你的中心思想，审查知识库中过时、低质量或重复的内容
+                </p>
+
+                <!-- 中心思想 -->
+                <div style="margin-bottom: 20px;">
+                    <h3 style="color: #00d4ff; font-size: 0.95em; margin-bottom: 10px;">中心思想</h3>
+                    <textarea id="core-belief" placeholder="描述你的目标、偏好和知识管理原则..." rows="6"></textarea>
+                    <div style="display: flex; gap: 10px;">
+                        <button onclick="loadCoreBelief()" class="secondary" style="flex: 1;">重新加载</button>
+                        <button onclick="saveCoreBelief()" style="flex: 1;">保存中心思想</button>
+                    </div>
+                    <div class="status" id="belief-status"></div>
+                </div>
+
+                <!-- 审查功能 -->
+                <div style="border-top: 1px solid #333; padding-top: 20px;">
+                    <h3 style="color: #00d4ff; font-size: 0.95em; margin-bottom: 10px;">知识审查</h3>
+                    <button onclick="reviewKnowledge()" id="review-btn">开始审查知识库</button>
+                    <div class="status" id="review-status"></div>
+
+                    <!-- 审查结果 -->
+                    <div id="review-results" style="display: none; margin-top: 15px;">
+                        <div style="background: #252540; padding: 15px; border-radius: 8px; margin-bottom: 15px;">
+                            <div style="display: flex; justify-content: space-between; margin-bottom: 10px;">
+                                <span id="review-summary">审查完成</span>
+                                <span>
+                                    <span style="color: #4caf50;" id="healthy-count">0</span> 健康 /
+                                    <span style="color: #f44336;" id="issues-count">0</span> 问题
+                                </span>
+                            </div>
+                        </div>
+
+                        <div id="recommendations-list"></div>
+
+                        <div id="delete-actions" style="display: none; margin-top: 15px; padding-top: 15px; border-top: 1px solid #333;">
+                            <div style="display: flex; gap: 10px; align-items: center;">
+                                <button onclick="selectAllRecommendations()" class="secondary" style="flex: 0 0 auto; width: auto; padding: 8px 16px;">全选</button>
+                                <button onclick="deleteSelectedKnowledge()" id="delete-btn" style="flex: 1; background: linear-gradient(135deg, #f44336, #c62828);">删除选中的知识</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 知识列表 -->
+            <div class="card" style="grid-column: span 2;">
+                <h2><span class="icon">📋</span> 知识列表</h2>
+                <div style="display: flex; gap: 10px; margin-bottom: 15px;">
+                    <button onclick="loadKnowledgeList()" style="flex: 1;">加载全部知识</button>
+                    <button onclick="clearKnowledgeList()" class="secondary" style="flex: 0 0 auto; width: auto; padding: 12px 24px;">清空列表</button>
+                </div>
+                <div class="results" id="knowledge-list" style="max-height: 500px;"></div>
+            </div>
         </div>
     </div>
 
@@ -1291,8 +1349,287 @@ async def god_layer_page():
             if (e.key === 'Enter') searchKnowledge();
         });
 
+        // ==================== 知识管家功能 ====================
+
+        // 加载中心思想
+        async function loadCoreBelief() {
+            const statusEl = document.getElementById('belief-status');
+            try {
+                const resp = await fetch('/api/curator/belief');
+                const data = await resp.json();
+
+                if (data.error || data.status === 'error') {
+                    statusEl.className = 'status error';
+                    statusEl.textContent = data.error || data.message;
+                    return;
+                }
+
+                document.getElementById('core-belief').value = data.belief || '';
+                statusEl.className = 'status success';
+                statusEl.textContent = '已加载';
+                setTimeout(() => { statusEl.className = 'status'; }, 2000);
+            } catch (e) {
+                statusEl.className = 'status error';
+                statusEl.textContent = '加载失败: ' + e.message;
+            }
+        }
+
+        // 保存中心思想
+        async function saveCoreBelief() {
+            const belief = document.getElementById('core-belief').value;
+            const statusEl = document.getElementById('belief-status');
+
+            if (!belief.trim()) {
+                statusEl.className = 'status error';
+                statusEl.textContent = '中心思想不能为空';
+                return;
+            }
+
+            try {
+                const resp = await fetch('/api/curator/belief', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ belief })
+                });
+                const data = await resp.json();
+
+                if (data.error || data.status === 'error') {
+                    statusEl.className = 'status error';
+                    statusEl.textContent = data.error || data.message;
+                } else {
+                    statusEl.className = 'status success';
+                    statusEl.textContent = '保存成功！';
+                }
+            } catch (e) {
+                statusEl.className = 'status error';
+                statusEl.textContent = '保存失败: ' + e.message;
+            }
+        }
+
+        // 审查知识库
+        async function reviewKnowledge() {
+            const btn = document.getElementById('review-btn');
+            const statusEl = document.getElementById('review-status');
+            const resultsEl = document.getElementById('review-results');
+
+            btn.disabled = true;
+            btn.textContent = 'AI 审查中...';
+            statusEl.className = 'status loading';
+            statusEl.textContent = '正在审查知识库，这可能需要一些时间...';
+            resultsEl.style.display = 'none';
+
+            try {
+                const resp = await fetch('/api/curator/review', { method: 'POST' });
+                const data = await resp.json();
+
+                if (data.error || data.status === 'error') {
+                    statusEl.className = 'status error';
+                    statusEl.textContent = data.error || data.message;
+                    return;
+                }
+
+                statusEl.className = 'status success';
+                statusEl.textContent = '审查完成！';
+
+                // 显示结果
+                resultsEl.style.display = 'block';
+                document.getElementById('review-summary').textContent = data.summary || '审查完成';
+                document.getElementById('healthy-count').textContent = data.healthy_count || 0;
+                document.getElementById('issues-count').textContent = data.issues_count || 0;
+
+                // 渲染建议列表
+                const listEl = document.getElementById('recommendations-list');
+                const actionsEl = document.getElementById('delete-actions');
+
+                if (!data.recommendations || data.recommendations.length === 0) {
+                    listEl.innerHTML = '<div style="color: #4caf50; padding: 10px; background: #1b4332; border-radius: 6px;">知识库整体健康，没有需要淘汰的内容</div>';
+                    actionsEl.style.display = 'none';
+                } else {
+                    const suggestionMap = {
+                        'delete': '建议删除',
+                        'update': '需要更新',
+                        'merge': '建议合并'
+                    };
+                    const suggestionColors = {
+                        'delete': '#f44336',
+                        'update': '#ff9800',
+                        'merge': '#2196f3'
+                    };
+
+                    let html = '';
+                    for (const r of data.recommendations) {
+                        html += `
+                        <div class="result-item" style="position: relative;">
+                            <label style="display: flex; align-items: flex-start; gap: 12px; cursor: pointer;">
+                                <input type="checkbox" class="delete-checkbox" value="${r.id}" style="margin-top: 4px; width: 18px; height: 18px;">
+                                <div style="flex: 1;">
+                                    <div class="result-title">${escapeHtml(r.title || r.id)}</div>
+                                    <div style="color: ${suggestionColors[r.suggestion] || '#888'}; font-size: 0.85em; margin-bottom: 5px;">
+                                        ${suggestionMap[r.suggestion] || r.suggestion}
+                                    </div>
+                                    <div style="color: #aaa; font-size: 0.9em;">${escapeHtml(r.reason)}</div>
+                                    ${r.detail ? `<div style="color: #666; font-size: 0.85em; margin-top: 5px;">${escapeHtml(r.detail)}</div>` : ''}
+                                </div>
+                            </label>
+                        </div>`;
+                    }
+                    listEl.innerHTML = html;
+                    actionsEl.style.display = 'block';
+                }
+
+            } catch (e) {
+                statusEl.className = 'status error';
+                statusEl.textContent = '审查失败: ' + e.message;
+            }
+
+            btn.disabled = false;
+            btn.textContent = '开始审查知识库';
+        }
+
+        // 全选建议
+        function selectAllRecommendations() {
+            const checkboxes = document.querySelectorAll('.delete-checkbox');
+            const allChecked = Array.from(checkboxes).every(cb => cb.checked);
+            checkboxes.forEach(cb => cb.checked = !allChecked);
+        }
+
+        // 删除选中的知识
+        async function deleteSelectedKnowledge() {
+            const checkboxes = document.querySelectorAll('.delete-checkbox:checked');
+            const ids = Array.from(checkboxes).map(cb => cb.value);
+
+            if (ids.length === 0) {
+                alert('请先选择要删除的知识');
+                return;
+            }
+
+            if (!confirm(`确定要删除 ${ids.length} 条知识吗？此操作不可恢复！`)) {
+                return;
+            }
+
+            const btn = document.getElementById('delete-btn');
+            btn.disabled = true;
+            btn.textContent = '删除中...';
+
+            try {
+                const resp = await fetch('/api/curator/delete', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ ids })
+                });
+                const data = await resp.json();
+
+                if (data.error || data.status === 'error') {
+                    alert('删除失败: ' + (data.error || data.message));
+                } else {
+                    alert(`成功删除 ${data.deleted_count} 条知识`);
+                    // 移除已删除的项
+                    for (const id of data.deleted || []) {
+                        const checkbox = document.querySelector(`.delete-checkbox[value="${id}"]`);
+                        if (checkbox) {
+                            checkbox.closest('.result-item').remove();
+                        }
+                    }
+                    loadStats();
+
+                    // 如果全部删除，隐藏删除按钮
+                    if (document.querySelectorAll('.delete-checkbox').length === 0) {
+                        document.getElementById('delete-actions').style.display = 'none';
+                        document.getElementById('recommendations-list').innerHTML =
+                            '<div style="color: #4caf50; padding: 10px; background: #1b4332; border-radius: 6px;">所有问题知识已处理</div>';
+                    }
+                }
+            } catch (e) {
+                alert('删除失败: ' + e.message);
+            }
+
+            btn.disabled = false;
+            btn.textContent = '删除选中的知识';
+        }
+
+        // 加载知识列表
+        async function loadKnowledgeList() {
+            const listEl = document.getElementById('knowledge-list');
+            listEl.innerHTML = '<div class="status loading">加载中...</div>';
+
+            try {
+                const resp = await fetch('/api/knowledge/list');
+                const data = await resp.json();
+
+                if (data.error || data.status === 'error') {
+                    listEl.innerHTML = `<div class="status error">${data.error || data.message}</div>`;
+                    return;
+                }
+
+                if (!data.knowledge || data.knowledge.length === 0) {
+                    listEl.innerHTML = '<div style="color: #888; text-align: center; padding: 20px;">知识库为空</div>';
+                    return;
+                }
+
+                const typeNames = {
+                    'project_experience': '项目经验',
+                    'code_pattern': '代码模式',
+                    'best_practice': '最佳实践',
+                    'user_feedback': '用户反馈',
+                    'github_example': 'GitHub示例',
+                    'documentation': '文档'
+                };
+
+                let html = `<div style="color: #888; font-size: 0.85em; margin-bottom: 10px;">共 ${data.count} 条知识</div>`;
+                for (const k of data.knowledge) {
+                    html += `
+                    <div class="result-item" data-id="${k.id}">
+                        <div style="display: flex; justify-content: space-between; align-items: flex-start;">
+                            <div class="result-title">${escapeHtml(k.title || '无标题')}</div>
+                            <button onclick="deleteKnowledgeItem('${k.id}')" style="width: auto; padding: 4px 10px; font-size: 0.75em; background: #4a1c1c; margin: 0;">删除</button>
+                        </div>
+                        <div class="result-content">${escapeHtml(k.content_preview)}</div>
+                        <div class="result-meta">
+                            <span class="tag">${typeNames[k.type] || k.type}</span>
+                            ${k.source ? `<span>来源: ${k.source}</span>` : ''}
+                            <span>${k.created_at ? new Date(k.created_at).toLocaleDateString() : ''}</span>
+                        </div>
+                    </div>`;
+                }
+                listEl.innerHTML = html;
+
+            } catch (e) {
+                listEl.innerHTML = `<div class="status error">加载失败: ${e.message}</div>`;
+            }
+        }
+
+        // 删除单条知识
+        async function deleteKnowledgeItem(id) {
+            if (!confirm('确定要删除这条知识吗？')) return;
+
+            try {
+                const resp = await fetch('/api/curator/delete', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ ids: [id] })
+                });
+                const data = await resp.json();
+
+                if (data.deleted_count > 0) {
+                    const item = document.querySelector(`.result-item[data-id="${id}"]`);
+                    if (item) item.remove();
+                    loadStats();
+                } else {
+                    alert('删除失败');
+                }
+            } catch (e) {
+                alert('删除失败: ' + e.message);
+            }
+        }
+
+        // 清空列表显示
+        function clearKnowledgeList() {
+            document.getElementById('knowledge-list').innerHTML = '';
+        }
+
         // 初始化
         loadStats();
+        loadCoreBelief();
     </script>
 </body>
 </html>
@@ -1544,4 +1881,127 @@ async def learn_from_github_api(request: dict):
     except Exception as e:
         import traceback
         traceback.print_exc()
+        return {"status": "error", "message": str(e)}
+
+
+# ==================== 知识管家 API ====================
+
+@app.get("/api/curator/belief")
+async def get_core_belief():
+    """获取中心思想"""
+    company = get_company()
+    if company is None:
+        return {"error": "请先选择模型"}
+
+    try:
+        from ..memory import KnowledgeCurator
+        curator = KnowledgeCurator(company.knowledge_base, company.llm)
+        belief = curator.get_core_belief()
+        return {"status": "ok", "belief": belief}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+@app.post("/api/curator/belief")
+async def set_core_belief(request: dict):
+    """设置中心思想"""
+    company = get_company()
+    if company is None:
+        return {"error": "请先选择模型"}
+
+    belief = request.get("belief", "")
+    if not belief:
+        return {"status": "error", "message": "中心思想不能为空"}
+
+    try:
+        from ..memory import KnowledgeCurator
+        curator = KnowledgeCurator(company.knowledge_base, company.llm)
+        curator.set_core_belief(belief)
+        return {"status": "ok"}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+@app.post("/api/curator/review")
+async def review_knowledge():
+    """审查知识库"""
+    company = get_company()
+    if company is None:
+        return {"error": "请先选择模型"}
+
+    try:
+        from ..memory import KnowledgeCurator
+        curator = KnowledgeCurator(company.knowledge_base, company.llm)
+        result = await curator.review()
+
+        return {
+            "status": "ok",
+            "summary": result.summary,
+            "healthy_count": result.healthy_count,
+            "issues_count": result.issues_count,
+            "recommendations": [
+                {
+                    "id": r.id,
+                    "title": r.title,
+                    "reason": r.reason,
+                    "suggestion": r.suggestion,
+                    "detail": r.detail
+                }
+                for r in result.recommendations
+            ]
+        }
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return {"status": "error", "message": str(e)}
+
+
+@app.post("/api/curator/delete")
+async def delete_knowledge(request: dict):
+    """删除知识"""
+    company = get_company()
+    if company is None:
+        return {"error": "请先选择模型"}
+
+    ids = request.get("ids", [])
+    if not ids:
+        return {"status": "error", "message": "请提供要删除的知识 ID"}
+
+    try:
+        from ..memory import KnowledgeCurator
+        curator = KnowledgeCurator(company.knowledge_base, company.llm)
+        result = curator.delete_knowledge(ids)
+        return {"status": "ok", **result}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+@app.get("/api/knowledge/list")
+async def list_all_knowledge():
+    """获取所有知识列表"""
+    company = get_company()
+    if company is None:
+        return {"error": "请先选择模型"}
+
+    try:
+        kb = company.knowledge_base
+        all_knowledge = list(kb._knowledge_meta.values())
+
+        return {
+            "status": "ok",
+            "count": len(all_knowledge),
+            "knowledge": [
+                {
+                    "id": k.id,
+                    "title": k.title,
+                    "type": k.knowledge_type.value,
+                    "source": k.source,
+                    "tags": k.tags,
+                    "created_at": k.created_at,
+                    "content_preview": k.content[:200] + "..." if len(k.content) > 200 else k.content
+                }
+                for k in all_knowledge
+            ]
+        }
+    except Exception as e:
         return {"status": "error", "message": str(e)}
