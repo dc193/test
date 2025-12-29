@@ -99,72 +99,60 @@ class ClaudeProvider(LLMProvider):
 
 
 class GeminiProvider(LLMProvider):
-    """Google Gemini接口"""
+    """Google Gemini接口 - 使用新版 google.genai SDK"""
 
     def __init__(self, api_key: str, model: str):
-        import google.generativeai as genai
-        genai.configure(api_key=api_key)
-        self.model = genai.GenerativeModel(model)
+        from google import genai
+        self.client = genai.Client(api_key=api_key)
         self.model_name = model
 
     def _convert_messages(self, messages: list[dict]) -> tuple[str, list[dict]]:
         """转换消息格式"""
         system = None
-        gemini_messages = []
+        gemini_contents = []
 
         for msg in messages:
             if msg["role"] == "system":
                 system = msg["content"]
             elif msg["role"] == "user":
-                gemini_messages.append({
+                gemini_contents.append({
                     "role": "user",
-                    "parts": [msg["content"]]
+                    "parts": [{"text": msg["content"]}]
                 })
             elif msg["role"] == "assistant":
-                gemini_messages.append({
+                gemini_contents.append({
                     "role": "model",
-                    "parts": [msg["content"]]
+                    "parts": [{"text": msg["content"]}]
                 })
 
-        return system, gemini_messages
+        return system, gemini_contents
 
     async def chat(self, messages: list[dict], **kwargs) -> str:
-        import google.generativeai as genai
+        system, contents = self._convert_messages(messages)
 
-        system, gemini_messages = self._convert_messages(messages)
-
+        config = {"max_output_tokens": 4096}
         if system:
-            model = genai.GenerativeModel(self.model_name, system_instruction=system)
-        else:
-            model = self.model
+            config["system_instruction"] = system
 
-        response = await model.generate_content_async(
-            gemini_messages,
-            generation_config=genai.types.GenerationConfig(
-                max_output_tokens=4096,
-            )
+        response = await self.client.aio.models.generate_content(
+            model=self.model_name,
+            contents=contents,
+            config=config
         )
         return response.text
 
     async def stream_chat(self, messages: list[dict], **kwargs) -> AsyncGenerator[str, None]:
-        import google.generativeai as genai
+        system, contents = self._convert_messages(messages)
 
-        system, gemini_messages = self._convert_messages(messages)
-
+        config = {"max_output_tokens": 4096}
         if system:
-            model = genai.GenerativeModel(self.model_name, system_instruction=system)
-        else:
-            model = self.model
+            config["system_instruction"] = system
 
-        response = await model.generate_content_async(
-            gemini_messages,
-            generation_config=genai.types.GenerationConfig(
-                max_output_tokens=4096,
-            ),
-            stream=True
-        )
-
-        async for chunk in response:
+        async for chunk in self.client.aio.models.generate_content_stream(
+            model=self.model_name,
+            contents=contents,
+            config=config
+        ):
             if chunk.text:
                 yield chunk.text
 
@@ -184,7 +172,7 @@ PROVIDER_CONFIGS = {
     },
     "gemini": {
         "env_key": ["GEMINI_API_KEY", "GOOGLE_API_KEY"],
-        "default_model": "gemini-1.5-pro",
+        "default_model": "gemini-2.0-flash",
         "type": "gemini"
     },
     "grok": {
@@ -411,18 +399,18 @@ def _get_claude_model_desc(model_id: str) -> str:
 def _list_gemini_models(api_key: str) -> list[dict]:
     """获取Gemini可用模型"""
     try:
-        import google.generativeai as genai
-        genai.configure(api_key=api_key)
+        from google import genai
+        client = genai.Client(api_key=api_key)
 
         models = []
-        for m in genai.list_models():
-            # 只保留支持generateContent的模型
-            if 'generateContent' in m.supported_generation_methods:
-                model_id = m.name.replace('models/', '')
+        for m in client.models.list():
+            model_id = m.name.replace('models/', '')
+            # 只保留 gemini 模型
+            if 'gemini' in model_id.lower():
                 models.append({
                     "id": model_id,
-                    "name": m.display_name,
-                    "description": m.description[:50] + "..." if len(m.description) > 50 else m.description
+                    "name": m.display_name if hasattr(m, 'display_name') else model_id,
+                    "description": m.description[:50] + "..." if hasattr(m, 'description') and m.description and len(m.description) > 50 else (m.description if hasattr(m, 'description') else "")
                 })
 
         return models
@@ -430,9 +418,9 @@ def _list_gemini_models(api_key: str) -> list[dict]:
         print(f"获取Gemini模型列表失败: {e}")
         # 返回默认列表
         return [
-            {"id": "gemini-1.5-pro", "name": "Gemini 1.5 Pro", "description": "最强版本"},
+            {"id": "gemini-2.0-flash", "name": "Gemini 2.0 Flash", "description": "最新快速版本"},
+            {"id": "gemini-1.5-pro", "name": "Gemini 1.5 Pro", "description": "强大版本"},
             {"id": "gemini-1.5-flash", "name": "Gemini 1.5 Flash", "description": "快速版本"},
-            {"id": "gemini-pro", "name": "Gemini Pro", "description": "标准版本"},
         ]
 
 
