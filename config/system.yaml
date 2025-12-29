@@ -1,0 +1,78 @@
+# AI 公司系统配置
+
+# ==================== 上帝层配置 ====================
+god_layer:
+  # 触发配置
+  schedule:
+    weekly_day: "sunday"      # 每周进化日
+    weekly_hour: 3            # 凌晨3点运行
+
+  event_trigger:
+    task_count: 20            # 每20个任务触发一次事件驱动进化
+
+  # 限制配置
+  limits:
+    max_weekly_learning: 10   # 每周最多自动学习10条知识
+    learning_cooldown_hours: 1  # 学习冷却时间（小时）
+
+  # 数据目录
+  data_dir: "data/god_layer"
+
+
+# ==================== CEO 层配置 ====================
+ceo_layer:
+  # 默认咨询的视角（可被具体任务覆盖）
+  default_perspectives:
+    - strategic
+    - product
+    - technical
+
+  # 任务配置
+  task:
+    max_token_per_task: 4000  # 单任务最大 token（预留）
+
+  # 工作记忆配置
+  working_memory:
+    max_items: 50             # 最大记忆条目
+    auto_clear_after_task: false  # 任务完成后是否清空
+
+
+# ==================== 顾问团配置 ====================
+advisory:
+  # 可用视角
+  available_perspectives:
+    - strategic   # 战略视角
+    - product     # 产品视角
+    - technical   # 技术视角
+    - user        # 用户视角
+    - business    # 商业视角
+    - risk        # 风险视角
+
+  # 自动选择视角时的默认数量
+  auto_select_count: 3
+
+
+# ==================== 知识库配置 ====================
+knowledge_base:
+  # 存储类型
+  embedding_type: "local"     # local 或 openai
+  store_type: "chroma"        # chroma 或 faiss
+
+  # 数据目录
+  data_dir: "data/knowledge"
+
+  # 检索配置
+  search:
+    default_top_k: 5
+    min_score: 0.3
+
+
+# ==================== 通用配置 ====================
+general:
+  # 数据根目录
+  data_root: "data"
+
+  # 日志配置
+  logging:
+    level: "INFO"
+    file: "logs/system.log"
