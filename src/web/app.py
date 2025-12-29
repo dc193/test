@@ -561,8 +561,17 @@ async def index():
             }
         }
 
+        // 处理输入法（IME）组合状态，避免在中文输入法中按回车确认时误发送消息
+        let isComposing = false;
+        inputEl.addEventListener('compositionstart', () => {
+            isComposing = true;
+        });
+        inputEl.addEventListener('compositionend', () => {
+            isComposing = false;
+        });
+
         inputEl.addEventListener('keydown', (e) => {
-            if (e.key === 'Enter' && !e.shiftKey) {
+            if (e.key === 'Enter' && !e.shiftKey && !isComposing) {
                 e.preventDefault();
                 sendMessage();
             }
