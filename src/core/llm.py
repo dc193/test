@@ -497,10 +497,50 @@ def get_all_available_models() -> list[dict]:
     return result
 
 
+def auto_select_model(provider_name: str, api_key: str) -> Optional[str]:
+    """自动选择最佳可用模型
+
+    Args:
+        provider_name: provider 名称
+        api_key: API key
+
+    Returns:
+        推荐的模型 ID，如果无法获取则返回 None
+    """
+    # 模型优先级偏好
+    preferences = {
+        "gemini": ["gemini-2.0-flash", "gemini-2.0", "gemini-1.5-pro", "gemini-1.5-flash", "gemini-pro"],
+        "claude": ["claude-sonnet-4", "claude-3-5-sonnet", "claude-3-sonnet", "claude-3-haiku"],
+        "openai": ["gpt-4o", "gpt-4-turbo", "gpt-4", "gpt-3.5-turbo"],
+    }
+
+    try:
+        models = list_models_for_provider(provider_name)
+        if not models:
+            return None
+
+        model_ids = [m['id'] for m in models]
+        prefs = preferences.get(provider_name, [])
+
+        # 按偏好顺序查找
+        for pref in prefs:
+            for model_id in model_ids:
+                if pref in model_id.lower():
+                    return model_id
+
+        # 没有匹配偏好，返回第一个
+        return model_ids[0] if model_ids else None
+
+    except Exception as e:
+        print(f"自动选择模型失败: {e}")
+        return None
+
+
 def create_llm_provider(
     provider_name: Optional[str] = None,
     model_id: Optional[str] = None,
-    config_path: str = "config/llm.yaml"
+    config_path: str = "config/llm.yaml",
+    auto_select: bool = True
 ) -> LLMProvider:
     """创建LLM Provider
 
@@ -508,6 +548,7 @@ def create_llm_provider(
         provider_name: 指定provider名称，如果为None则使用配置文件中的默认值
         model_id: 指定模型ID，如果为None则使用provider的默认模型
         config_path: 配置文件路径
+        auto_select: 如果配置的模型不可用，是否自动选择最佳模型
 
     Returns:
         LLMProvider实例
@@ -533,8 +574,18 @@ def create_llm_provider(
     # 获取配置参数
     base_url = provider_config.get("base_url", default_config.get("base_url"))
 
-    # 模型优先级：参数传入 > 配置文件 > 默认值
-    model = model_id or provider_config.get("model", default_config.get("default_model"))
+    # 模型优先级：参数传入 > 配置文件 > 自动选择 > 默认值
+    model = model_id or provider_config.get("model")
+
+    # 如果没有指定模型且开启了自动选择，尝试自动选择
+    if not model and auto_select:
+        model = auto_select_model(provider_name, api_key)
+        if model:
+            print(f"自动选择模型: {model}")
+
+    # 最后使用默认值
+    if not model:
+        model = default_config.get("default_model")
 
     # 根据类型创建Provider
     provider_type = default_config.get("type", "openai_compatible")
