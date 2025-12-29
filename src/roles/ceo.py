@@ -129,6 +129,9 @@ class CEO(BaseAgent):
             if self.current_plan:
                 await self.send("chro", json.dumps(self.current_plan, ensure_ascii=False), "staffing_request")
 
+        # 自动保存状态
+        self.save_state()
+
     def _extract_plan(self, response: str) -> Optional[dict]:
         """从回复中提取计划JSON"""
         try:
@@ -161,3 +164,32 @@ class CEO(BaseAgent):
             "has_plan": self.current_plan is not None,
             "plan": self.current_plan
         }
+
+    def save_state(self):
+        """保存 CEO 状态到持久化存储"""
+        self.company.save_agent_state(
+            self.id,
+            state=self.state,
+            current_plan=self.current_plan,
+            conversation_history=self.conversation_history
+        )
+
+    def restore_state(self) -> bool:
+        """从持久化存储恢复 CEO 状态"""
+        state_data = self.company.load_agent_state(self.id)
+        if state_data:
+            self.state = state_data.get("state", "idle")
+            self.current_plan = state_data.get("current_plan")
+            self.conversation_history = state_data.get("conversation_history", [])
+
+            # 恢复 AgentStatus
+            if self.state == "idle":
+                self.company.update_agent_status("ceo", AgentStatus.IDLE)
+            else:
+                task = "需求探索" if self.state == "exploring" else \
+                       "计划制定完成" if self.state == "planning" else \
+                       "监督执行" if self.state == "executing" else \
+                       "验收审查" if self.state == "reviewing" else None
+                self.company.update_agent_status("ceo", AgentStatus.WORKING, task)
+            return True
+        return False

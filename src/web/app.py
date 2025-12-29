@@ -27,8 +27,14 @@ current_model: Optional[str] = None  # 当前选择的模型
 websocket_connections: list[WebSocket] = []
 
 
-def get_company(provider_name: Optional[str] = None, model_id: Optional[str] = None) -> Optional[Company]:
-    """获取或创建公司实例"""
+def get_company(provider_name: Optional[str] = None, model_id: Optional[str] = None, restore_session: bool = True) -> Optional[Company]:
+    """获取或创建公司实例
+
+    Args:
+        provider_name: LLM 提供商名称
+        model_id: 模型 ID
+        restore_session: 是否恢复之前的会话状态
+    """
     global company_instance, current_provider, current_model
 
     # 如果还没选择provider，返回None
@@ -65,6 +71,14 @@ def get_company(provider_name: Optional[str] = None, model_id: Optional[str] = N
         async def on_message(message: Message):
             await broadcast_message(message)
         company_instance.bus.set_user_callback(on_message)
+
+        # 恢复会话状态
+        if restore_session:
+            company_instance.restore_session()
+            # 恢复各个 Agent 的状态
+            ceo.restore_state()
+            chro.restore_state()
+            coo.restore_state()
 
     return company_instance
 
@@ -766,7 +780,12 @@ async def index():
                     modelSelected = true;
                     currentModelDisplay.textContent = modelId;
                     modelSelect.value = provider + '|' + modelId;
-                    resetChatUI();
+
+                    // 尝试恢复会话，如果没有历史则显示默认欢迎消息
+                    const restored = await restoreSession();
+                    if (!restored) {
+                        resetChatUI();
+                    }
                 } else {
                     alert('选择失败: ' + result.message);
                 }
@@ -778,7 +797,7 @@ async def index():
         async function changeModel() {
             const value = modelSelect.value;
             const [provider, modelId] = value.split('|');
-            if (!confirm(`切换到 ${modelId} 将重置当前对话，确定吗？`)) {
+            if (!confirm(`切换到 ${modelId}？之前的对话记录会保留。`)) {
                 updateStatus();
                 return;
             }
@@ -790,7 +809,12 @@ async def index():
                     body: JSON.stringify({ provider, model: modelId })
                 });
                 currentModelDisplay.textContent = modelId;
-                resetChatUI();
+
+                // 恢复会话历史，如果没有历史则显示默认欢迎消息
+                const restored = await restoreSession();
+                if (!restored) {
+                    resetChatUI();
+                }
             } catch (e) {
                 alert('切换失败: ' + e.message);
             }
@@ -816,12 +840,51 @@ async def index():
             resetChatUI();
         }
 
+        async function restoreSession() {
+            // 尝试恢复之前的会话
+            try {
+                const response = await fetch('/api/session/history');
+                const data = await response.json();
+
+                if (data.status === 'ok' && data.messages && data.messages.length > 0) {
+                    // 清空默认欢迎消息
+                    messagesEl.innerHTML = '';
+
+                    // 恢复所有历史消息
+                    data.messages.forEach(msg => {
+                        if (msg.from_agent === 'user') {
+                            addMessage('user', msg.content);
+                        } else {
+                            addMessage(msg.from_agent, msg.content, msg.from_agent);
+                        }
+                    });
+
+                    console.log('会话已恢复，共', data.messages.length, '条消息');
+                    return true;
+                }
+            } catch (e) {
+                console.error('恢复会话失败:', e);
+            }
+            return false;
+        }
+
         // 初始化
         connectWebSocket();
         loadModels();
         updateStatus();
         inputEl.focus();
         setInterval(updateStatus, 5000);
+
+        // 延迟恢复会话（等待模型选择完成）
+        setTimeout(async () => {
+            if (modelSelected) {
+                const restored = await restoreSession();
+                if (!restored) {
+                    // 如果没有历史，显示默认欢迎消息
+                    resetChatUI();
+                }
+            }
+        }, 500);
     </script>
 </body>
 </html>
@@ -1994,10 +2057,51 @@ async def send_command(request: dict):
 
 @app.post("/api/reset")
 async def reset():
+    """重置会话 - 创建新会话"""
     global company_instance
+    if company_instance:
+        # 删除当前会话并创建新会话
+        company_instance.delete_current_session()
+        # 重置所有 Agent 状态
+        for agent in company_instance.agents.values():
+            agent.reset()
     company_instance = None
     websocket_connections.clear()
     return {"status": "ok"}
+
+
+@app.get("/api/session/history")
+async def get_session_history():
+    """获取当前会话的消息历史（用于刷新后恢复）"""
+    company = get_company()
+    if company is None:
+        return {"status": "ok", "messages": [], "session_id": None}
+
+    messages = company.bus.get_history(limit=100)
+    return {
+        "status": "ok",
+        "session_id": company.session_id,
+        "messages": [msg.to_dict() for msg in messages]
+    }
+
+
+@app.get("/api/session/info")
+async def get_session_info():
+    """获取会话信息"""
+    company = get_company()
+    if company is None:
+        return {"status": "ok", "session_id": None, "has_history": False}
+
+    messages = company.bus.get_history(limit=1)
+    ceo = company.get_agent("ceo")
+    ceo_state = ceo.get_state() if ceo else {}
+
+    return {
+        "status": "ok",
+        "session_id": company.session_id,
+        "has_history": len(messages) > 0,
+        "ceo_state": ceo_state
+    }
 
 
 # ==================== 知识库 API ====================

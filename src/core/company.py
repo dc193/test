@@ -8,6 +8,7 @@ import json
 
 from .message import Message
 from .llm import LLMProvider, create_llm_provider
+from .session_store import get_session_store, SessionStore
 from ..memory import KnowledgeBase, create_knowledge_base
 
 
@@ -31,11 +32,15 @@ class AgentInfo:
 class MessageBus:
     """消息总线 - 所有agent通过这里通信"""
 
-    def __init__(self):
+    def __init__(self, session_id: Optional[str] = None, session_store: Optional[SessionStore] = None):
         self._subscribers: dict[str, list[Callable]] = {}  # agent_id -> callbacks
         self._type_subscribers: dict[str, list[Callable]] = {}  # msg_type -> callbacks
         self._message_history: list[Message] = []
         self._user_callback: Optional[Callable] = None
+
+        # 会话持久化
+        self._session_store = session_store
+        self._session_id = session_id
 
     def subscribe(self, agent_id: str, callback: Callable):
         """订阅某个agent的消息"""
@@ -56,6 +61,10 @@ class MessageBus:
     async def publish(self, message: Message):
         """发布消息"""
         self._message_history.append(message)
+
+        # 持久化消息
+        if self._session_store and self._session_id:
+            self._session_store.save_message(self._session_id, message)
 
         # 通知用户界面
         if self._user_callback:
@@ -81,6 +90,11 @@ class MessageBus:
         """获取消息历史"""
         return self._message_history[-limit:]
 
+    def load_history_from_store(self, limit: int = 100):
+        """从存储加载消息历史"""
+        if self._session_store and self._session_id:
+            self._message_history = self._session_store.get_messages(self._session_id, limit)
+
 
 class Company:
     """AI公司 - 管理所有agent
@@ -96,10 +110,29 @@ class Company:
     def __init__(
         self,
         llm: Optional[LLMProvider] = None,
-        knowledge_base: Optional[KnowledgeBase] = None
+        knowledge_base: Optional[KnowledgeBase] = None,
+        session_id: Optional[str] = None
     ):
         self.llm = llm or create_llm_provider()
-        self.bus = MessageBus()
+
+        # 会话管理
+        self._session_store = get_session_store()
+        self._session_id = session_id
+
+        # 如果没有指定 session_id，尝试恢复最近的会话或创建新会话
+        if self._session_id is None:
+            self._session_id = self._session_store.get_latest_session()
+            if self._session_id is None:
+                self._session_id = self._session_store.create_session()
+        else:
+            # 确保指定的会话存在
+            if self._session_store.get_session(self._session_id) is None:
+                self._session_store.create_session(self._session_id)
+
+        self.bus = MessageBus(
+            session_id=self._session_id,
+            session_store=self._session_store
+        )
         self.agents: dict[str, Any] = {}  # agent_id -> agent instance
         self.agent_info: dict[str, AgentInfo] = {}
         self.current_project: Optional[dict] = None
@@ -177,5 +210,49 @@ class Company:
                 for info in self.agent_info.values()
             ],
             "project": self.current_project,
-            "message_count": len(self.bus._message_history)
+            "message_count": len(self.bus._message_history),
+            "session_id": self._session_id
         }
+
+    # ========== 会话管理方法 ==========
+
+    @property
+    def session_id(self) -> str:
+        """获取当前会话 ID"""
+        return self._session_id
+
+    def save_agent_state(self, agent_id: str, state: str,
+                         current_plan: Optional[dict] = None,
+                         conversation_history: Optional[list] = None):
+        """保存 Agent 状态到持久化存储"""
+        self._session_store.save_agent_state(
+            self._session_id,
+            agent_id,
+            state,
+            current_plan,
+            conversation_history
+        )
+
+    def load_agent_state(self, agent_id: str) -> Optional[dict]:
+        """从持久化存储加载 Agent 状态"""
+        return self._session_store.get_agent_state(self._session_id, agent_id)
+
+    def restore_session(self):
+        """恢复会话（加载消息历史和 Agent 状态）"""
+        # 加载消息历史
+        self.bus.load_history_from_store()
+        return self._session_store.get_all_agent_states(self._session_id)
+
+    def new_session(self) -> str:
+        """创建新会话"""
+        self._session_id = self._session_store.create_session()
+        self.bus._session_id = self._session_id
+        self.bus._message_history = []
+        return self._session_id
+
+    def delete_current_session(self):
+        """删除当前会话"""
+        self._session_store.delete_session(self._session_id)
+        self._session_id = self._session_store.create_session()
+        self.bus._session_id = self._session_id
+        self.bus._message_history = []

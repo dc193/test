@@ -60,3 +60,19 @@ class BaseAgent(ABC):
     def reset(self):
         """重置对话历史"""
         self.conversation_history = []
+
+    def save_state(self):
+        """保存状态到持久化存储"""
+        self.company.save_agent_state(
+            self.id,
+            state="idle",
+            conversation_history=self.conversation_history
+        )
+
+    def restore_state(self) -> bool:
+        """从持久化存储恢复状态，返回是否成功恢复"""
+        state_data = self.company.load_agent_state(self.id)
+        if state_data:
+            self.conversation_history = state_data.get("conversation_history", [])
+            return True
+        return False
