@@ -21,10 +21,18 @@ def main():
     print("\n启动中...\n")
 
     # 检查API Key
-    if not os.getenv("OPENAI_API_KEY") and not os.getenv("ANTHROPIC_API_KEY"):
-        print("⚠️  警告: 未设置 OPENAI_API_KEY 或 ANTHROPIC_API_KEY")
-        print("   请设置环境变量后重启\n")
-        print("   例如: export OPENAI_API_KEY=your-key-here\n")
+    has_key = (
+        os.getenv("OPENAI_API_KEY") or
+        os.getenv("ANTHROPIC_API_KEY") or
+        os.getenv("GEMINI_API_KEY") or
+        os.getenv("GOOGLE_API_KEY")
+    )
+    if not has_key:
+        print("⚠️  警告: 未设置任何 API Key")
+        print("   请设置以下环境变量之一:")
+        print("   - GEMINI_API_KEY / GOOGLE_API_KEY")
+        print("   - ANTHROPIC_API_KEY")
+        print("   - OPENAI_API_KEY\n")
 
     print("🚀 访问 http://localhost:8000 开始使用\n")
     print("=" * 50 + "\n")
