@@ -172,7 +172,7 @@ PROVIDER_CONFIGS = {
     },
     "gemini": {
         "env_key": ["GEMINI_API_KEY", "GOOGLE_API_KEY"],
-        "default_model": "gemini-2.0-flash",
+        "default_model": "gemini-2.5-flash-preview-05-20",
         "type": "gemini"
     },
     "grok": {
@@ -418,9 +418,9 @@ def _list_gemini_models(api_key: str) -> list[dict]:
         print(f"获取Gemini模型列表失败: {e}")
         # 返回默认列表
         return [
-            {"id": "gemini-2.0-flash", "name": "Gemini 2.0 Flash", "description": "最新快速版本"},
-            {"id": "gemini-1.5-pro", "name": "Gemini 1.5 Pro", "description": "强大版本"},
-            {"id": "gemini-1.5-flash", "name": "Gemini 1.5 Flash", "description": "快速版本"},
+            {"id": "gemini-2.5-flash-preview-05-20", "name": "Gemini 2.5 Flash", "description": "最新快速版本"},
+            {"id": "gemini-2.5-pro-preview-05-06", "name": "Gemini 2.5 Pro", "description": "最新强大版本"},
+            {"id": "gemini-2.0-flash", "name": "Gemini 2.0 Flash", "description": "稳定快速版本"},
         ]
 
 
@@ -509,7 +509,7 @@ def auto_select_model(provider_name: str, api_key: str) -> Optional[str]:
     """
     # 模型优先级偏好
     preferences = {
-        "gemini": ["gemini-2.0-flash", "gemini-2.0", "gemini-1.5-pro", "gemini-1.5-flash", "gemini-pro"],
+        "gemini": ["gemini-2.5-flash", "gemini-2.5-pro", "gemini-2.0-flash", "gemini-2.0", "gemini-1.5-pro", "gemini-1.5-flash"],
         "claude": ["claude-sonnet-4", "claude-3-5-sonnet", "claude-3-sonnet", "claude-3-haiku"],
         "openai": ["gpt-4o", "gpt-4-turbo", "gpt-4", "gpt-3.5-turbo"],
     }

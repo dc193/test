@@ -115,7 +115,7 @@ def recommend_model(models: list[dict], provider: str) -> str:
 
     # 推荐策略
     preferences = {
-        "gemini": ["gemini-2.0-flash", "gemini-2.0", "gemini-1.5-pro", "gemini-1.5-flash"],
+        "gemini": ["gemini-2.5-flash", "gemini-2.5-pro", "gemini-2.0-flash", "gemini-2.0", "gemini-1.5-pro"],
         "claude": ["claude-sonnet-4", "claude-3-5-sonnet", "claude-3-sonnet", "claude-3-haiku"],
         "openai": ["gpt-4o", "gpt-4-turbo", "gpt-4", "gpt-3.5-turbo"],
     }
