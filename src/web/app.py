@@ -655,8 +655,7 @@ async def index():
 
             // 更新当前provider显示
             if (data.current_provider) {
-                currentProviderEl.textContent = data.current_provider;
-                providerSelect.value = data.current_provider;
+                currentModelDisplay.textContent = data.current_model || data.current_provider;
             }
 
             if (data.agents) {
