@@ -148,11 +148,13 @@ class GeminiProvider(LLMProvider):
         if system:
             config["system_instruction"] = system
 
-        async for chunk in self.client.aio.models.generate_content_stream(
+        # 先 await 获取 async iterator，再进行迭代
+        stream = await self.client.aio.models.generate_content_stream(
             model=self.model_name,
             contents=contents,
             config=config
-        ):
+        )
+        async for chunk in stream:
             if chunk.text:
                 yield chunk.text
 
